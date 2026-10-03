@@ -16,26 +16,25 @@ COPY scripts ./scripts
 
 # Compile TypeScript. With rootDir="./", output is dist/src/*.js
 RUN npm run build
-
 # ── Runtime stage ────────────────────────────────────────────
 FROM mcr.microsoft.com/playwright:v1.63.0-noble AS runner
 WORKDIR /app
 
-# No need to install dumb-init or browsers — the image has them
+# Install dumb-init for proper signal handling
+RUN apt-get update && apt-get install -y --no-install-recommends dumb-init \
+  && rm -rf /var/lib/apt/lists/*
+
 ENV NODE_ENV=production
 ENV TZ=Asia/Tehran
 
-# Install production deps only (no Playwright browser download)
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-# Copy build artifacts from builder
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/migrations ./migrations
 COPY --from=builder /app/scripts ./scripts
 COPY package.json ./
 
-# Create non-root user (image runs as root by default)
 RUN groupadd -r appgroup && useradd -r -g appgroup appuser \
   && chown -R appuser:appgroup /app
 USER appuser
