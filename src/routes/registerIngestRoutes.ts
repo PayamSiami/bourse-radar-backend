@@ -7,7 +7,7 @@ import {
   WATCHLIST,
 } from "#services/ingest";
 import type { ArchiveResult } from "#services/ingest";
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 
 /**
  * Single-flight guard.
