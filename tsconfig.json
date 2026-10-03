@@ -1,0 +1,37 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "lib": ["ES2022"],
+    "outDir": "./dist",
+    "rootDir": "./",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": false,
+    "noEmitOnError": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "baseUrl": ".",
+    "paths": {
+      "#config": ["src/config/index.ts"],
+      "#types/*": ["src/types/*.ts"],
+      "#utils/*": ["src/utils/*.ts"],
+      "#db/*": ["src/db/*.ts"],
+      "#cache/*": ["src/cache/*.ts"],
+      "#scrapers/*": ["src/scrapers/*.ts"],
+      "#services/*": ["src/services/*.ts"],
+      "#routes/*": ["src/routes/*.ts"],
+      "#plugins/*": ["src/plugins/*.ts"],
+      "#jobs/*": ["src/jobs/*.ts"]
+    },
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "sourceMap": true,
+    "declaration": false
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules", "dist", "tests"]
+}
