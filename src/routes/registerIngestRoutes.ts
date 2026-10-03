@@ -47,22 +47,6 @@ export function registerIngestRoutes(server: FastifyInstance): void {
   // Jalali date shape: YYYY/MM/DD or YYYY-MM-DD (4-digit year, 1-2 digit mo/day).
   const JALALI_RE = /^\d{4}[/-]\d{1,2}[/-]\d{1,2}$/;
 
-  // ── Localhost guard, applied once via hook ────────────────────
-
-  const LOCALHOST_IPS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
-
-  const requireLocalhost = (
-    req: FastifyRequest,
-    reply: FastifyReply,
-    done: (err?: Error) => void,
-  ) => {
-    if (!LOCALHOST_IPS.has(req.ip)) {
-      reply.code(403).send({ error: "Forbidden (localhost only)" });
-      return;
-    }
-    done();
-  };
-
   // ── Shared helpers ────────────────────────────────────────────
 
   const fullPipeline = async () => ({
@@ -273,11 +257,6 @@ export function registerIngestRoutes(server: FastifyInstance): void {
       coolingDown: { type: "boolean" },
     },
   } as const;
-
-  // Apply the localhost guard to every route registered in this scope.
-  // (Fastify hooks are scoped to the enclosing plugin, so this is safe as
-  // long as registerIngestRoutes is called inside its own plugin wrapper.)
-  server.addHook("onRequest", requireLocalhost);
 
   // ── Primary (merged) route ────────────────────────────────────
 
