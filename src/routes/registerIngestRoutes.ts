@@ -49,33 +49,17 @@ export function registerIngestRoutes(server: FastifyInstance): void {
 
   // ── Localhost guard, applied once via hook ────────────────────
 
-  const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
+  const LOCALHOST_IPS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
 
-  const requireAdminToken = (
+  const requireLocalhost = (
     req: FastifyRequest,
     reply: FastifyReply,
     done: (err?: Error) => void,
   ) => {
-    if (!ADMIN_TOKEN) {
-      req.log.error("ADMIN_TOKEN not set — admin routes disabled");
-      reply
-        .code(503)
-        .send({ error: "Admin routes disabled (no token configured)" });
+    if (!LOCALHOST_IPS.has(req.ip)) {
+      reply.code(403).send({ error: "Forbidden (localhost only)" });
       return;
     }
-
-    const header = req.headers["x-admin-token"];
-    const token = Array.isArray(header) ? header[0] : header;
-
-    if (token !== ADMIN_TOKEN) {
-      req.log.warn(
-        { path: req.url, ip: req.ip },
-        "admin route denied: bad or missing token",
-      );
-      reply.code(403).send({ error: "Forbidden" });
-      return;
-    }
-
     done();
   };
 
@@ -293,7 +277,7 @@ export function registerIngestRoutes(server: FastifyInstance): void {
   // Apply the localhost guard to every route registered in this scope.
   // (Fastify hooks are scoped to the enclosing plugin, so this is safe as
   // long as registerIngestRoutes is called inside its own plugin wrapper.)
-  server.addHook("onRequest", requireAdminToken);
+  server.addHook("onRequest", requireLocalhost);
 
   // ── Primary (merged) route ────────────────────────────────────
 
@@ -332,11 +316,7 @@ export function registerIngestRoutes(server: FastifyInstance): void {
 
       try {
         const out = targets
-          ? await runArchive(
-              targets,
-              boundsFrom(query).from,
-              boundsFrom(query).to,
-            )
+          ? await runArchive(targets, boundsFrom(query).from, boundsFrom(query).to)
           : await fullPipeline();
         return reply.send({ ...out, throttle: codalThrottleStatus() });
       } catch (e) {
