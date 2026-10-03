@@ -18,30 +18,24 @@ COPY scripts ./scripts
 RUN npm run build
 
 # ── Runtime stage ────────────────────────────────────────────
-FROM node:22-bookworm-slim AS runner
+FROM mcr.microsoft.com/playwright:v1.63.0-noble AS runner
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    dumb-init ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
-
+# No need to install dumb-init or browsers — the image has them
 ENV NODE_ENV=production
 ENV TZ=Asia/Tehran
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Production deps only + Playwright browsers in a shared path
+# Install production deps only (no Playwright browser download)
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev \
-  && npx playwright install --with-deps chromium \
-  && chmod -R 755 /ms-playwright \
-  && npm cache clean --force
+RUN npm ci --omit=dev && npm cache clean --force
 
-# Copy build artifacts and runtime files from the builder stage
+# Copy build artifacts from builder
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/migrations ./migrations
 COPY --from=builder /app/scripts ./scripts
 COPY package.json ./
 
+# Create non-root user (image runs as root by default)
 RUN groupadd -r appgroup && useradd -r -g appgroup appuser \
   && chown -R appuser:appgroup /app
 USER appuser
