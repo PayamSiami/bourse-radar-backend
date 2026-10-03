@@ -49,22 +49,33 @@ export function registerIngestRoutes(server: FastifyInstance): void {
 
   // ── Localhost guard, applied once via hook ────────────────────
 
-  const LOCALHOST_IPS = new Set([
-    "127.0.0.1",
-    "::1",
-    "::ffff:127.0.0.1",
-    "5.237.16.174",
-  ]);
+  const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
 
-  const requireLocalhost = (
+  const requireAdminToken = (
     req: FastifyRequest,
     reply: FastifyReply,
     done: (err?: Error) => void,
   ) => {
-    if (!LOCALHOST_IPS.has(req.ip)) {
-      reply.code(403).send({ error: "Forbidden (localhost only)" });
+    if (!ADMIN_TOKEN) {
+      req.log.error("ADMIN_TOKEN not set — admin routes disabled");
+      reply
+        .code(503)
+        .send({ error: "Admin routes disabled (no token configured)" });
       return;
     }
+
+    const header = req.headers["x-admin-token"];
+    const token = Array.isArray(header) ? header[0] : header;
+
+    if (token !== ADMIN_TOKEN) {
+      req.log.warn(
+        { path: req.url, ip: req.ip },
+        "admin route denied: bad or missing token",
+      );
+      reply.code(403).send({ error: "Forbidden" });
+      return;
+    }
+
     done();
   };
 
@@ -282,7 +293,7 @@ export function registerIngestRoutes(server: FastifyInstance): void {
   // Apply the localhost guard to every route registered in this scope.
   // (Fastify hooks are scoped to the enclosing plugin, so this is safe as
   // long as registerIngestRoutes is called inside its own plugin wrapper.)
-  server.addHook("onRequest", requireLocalhost);
+  server.addHook("onRequest", requireAdminToken);
 
   // ── Primary (merged) route ────────────────────────────────────
 
