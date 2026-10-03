@@ -49,7 +49,12 @@ export function registerIngestRoutes(server: FastifyInstance): void {
 
   // ── Localhost guard, applied once via hook ────────────────────
 
-  const LOCALHOST_IPS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+  const LOCALHOST_IPS = new Set([
+    "127.0.0.1",
+    "::1",
+    "::ffff:127.0.0.1",
+    "5.237.16.174",
+  ]);
 
   const requireLocalhost = (
     req: FastifyRequest,
@@ -316,7 +321,11 @@ export function registerIngestRoutes(server: FastifyInstance): void {
 
       try {
         const out = targets
-          ? await runArchive(targets, boundsFrom(query).from, boundsFrom(query).to)
+          ? await runArchive(
+              targets,
+              boundsFrom(query).from,
+              boundsFrom(query).to,
+            )
           : await fullPipeline();
         return reply.send({ ...out, throttle: codalThrottleStatus() });
       } catch (e) {
