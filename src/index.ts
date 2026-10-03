@@ -14,6 +14,7 @@ import { config } from "#config";
 import { registerPlugins } from "#plugins/index";
 import { registerRoutes } from "#routes/index";
 import { initializeJobs } from "#jobs/index";
+import { runMigrations } from "#db/migrate";
 
 /**
  * A stray rejection must NOT take the API down.
@@ -55,11 +56,37 @@ async function buildServer() {
 }
 
 async function main() {
+  // Apply migrations BEFORE starting to listen. Postgres may not be
+  // ready yet in Coolify/Docker, so retry briefly instead of crashing.
+  const maxAttempts = 12;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await runMigrations();
+      break;
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : String(err);
+      if (attempt === maxAttempts) {
+        console.warn(
+          `[migrate] failed after ${maxAttempts} attempts — starting without migrations: ${msg}`,
+        );
+        break;
+      }
+      const waitMs = Math.min(2000 * attempt, 10000);
+      console.warn(
+        `[migrate] attempt ${attempt}/${maxAttempts} failed (${msg}) — retrying in ${waitMs}ms`,
+      );
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
+
   const server = await buildServer();
 
   try {
     await server.listen({ port: config.app.port, host: "0.0.0.0" });
-    console.log(`Bourse Radar API listening on http://0.0.0.0:${config.app.port}`);
+    console.log(
+      `Bourse Radar API listening on http://0.0.0.0:${config.app.port}`,
+    );
   } catch (err) {
     console.error("Fatal startup error:", err);
     process.exit(1);
