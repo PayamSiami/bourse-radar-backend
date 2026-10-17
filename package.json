@@ -31,6 +31,7 @@
     "test:cover": "vitest run --coverage",
     "db:migrate": "node scripts/migrate.js up",
     "db:rollback": "node scripts/migrate.js down",
+    "ingest:local": "node --experimental-strip-types scripts/ingest-local.mjs",
     "lint": "eslint src --ext .ts --max-warnings 0",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "docker:build": "docker build -t bourse-radar-api .",

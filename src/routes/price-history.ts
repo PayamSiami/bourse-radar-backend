@@ -5,6 +5,65 @@ export async function registerPriceHistoryRoutes(
   server: FastifyInstance,
   prefix: string,
 ) {
+  // GET /api/prices/bulk – multiple symbols
+  server.get(
+    `${prefix}/bulk`,
+    {
+      schema: {
+        tags: ["prices"],
+        summary: "Get price history for multiple symbols",
+        querystring: {
+          type: "object",
+          properties: {
+            symbols: {
+              type: "string",
+              description:
+                "Comma-separated symbols: فولاد,فخوز,فملی",
+            },
+            days: { type: "integer", minimum: 1, maximum: 1000, default: 90 },
+          },
+        },
+      },
+    },
+    async (req: any, reply: any) => {
+      const symbols = req.query.symbols
+        ? ((req.query.symbols as string) || "").split(",").map((s: string) => s.trim())
+        : [];
+      if (!Array.isArray(symbols) || symbols.length === 0) {
+        return reply.status(400).send({
+          error: "symbols param is required and should be comma-separated",
+        });
+      }
+
+      const { days = 90 } = req.query as { days?: number };
+
+      const queries = symbols.map((sym) =>
+        server.db<{ t: Date; p: number }[]>`
+          SELECT timestamp AS t, last_price::float8 AS p
+          FROM prices
+          WHERE symbol = ${sym}
+            AND timestamp > NOW() - (${days} || ' days')::interval
+            AND last_price IS NOT NULL
+          ORDER BY timestamp ASC
+        `,
+      );
+
+      const results = await Promise.all(queries);
+
+      const formatted = results.map((points, idx) => ({
+        symbol: symbols[idx],
+        points,
+        meta: {
+          count: points.length,
+          from: points[0]?.t?.toISOString() ?? null,
+          to: points[points.length - 1]?.t?.toISOString() ?? null,
+        },
+      }));
+
+      return reply.send({ symbols, data: formatted });
+    },
+  );
+
   // GET /api/prices/:symbol — line chart
   server.get(
     `${prefix}/:symbol`,

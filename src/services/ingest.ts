@@ -74,7 +74,7 @@ export const WATCHLIST: Array<{
   { sym: "تاپیکو", name: "سرمایهگذاری نفت و گاز تامین", type: "general" },
 
   // // ── شیمیایی (Chemicals) ─────────────────────────────
-  // { sym: "شکام", name: "صنایع شیمیایی کیمیاگران امروز", type: "general" },
+  { sym: "شکام", name: "صنایع شیمیایی کیمیاگران امروز", type: "general" },
   { sym: "شسینا", name: "صنایع شیمیایی سینا", type: "general" },
   { sym: "شبصیر", name: "پتروشیمی قائد بصیر", type: "general" },
   { sym: "شغدیر", name: "پتروشیمی غدیر", type: "general" },
@@ -396,11 +396,27 @@ export async function pruneOldPrices(
 // Phase 2: Codal monthly sales (live scrape path)
 // ═══════════════════════════════════════════════════════════════
 
+export interface MonthlySalesSyncOptions {
+  /** How many recent letters to fetch per symbol (1 = only the latest month). */
+  maxMonths?: number;
+  /** Skip months already ingested within this many days (dedup window). */
+  skipKnownDays?: number;
+}
+
 export async function syncMonthlySales(
   sql: PostgresDb,
   symbols: string[],
+  opts: MonthlySalesSyncOptions = {},
 ): Promise<number> {
+  const maxMonths = opts.maxMonths ?? MONTHLY_SALES_DEPTH;
+  // Re-running ingest used to re-scrape (and re-upsert) months we already
+  // have, which looks like "duplicate data". Skip anything already in the DB
+  // unless it's older than this window — that's also when revisions (اصلاحیه)
+  // get picked up.
+  const skipKnownDays = opts.skipKnownDays ?? 7;
+
   let count = 0;
+  let skippedKnown = 0;
   let skippedForThrottle = 0;
 
   const eligible = symbols.filter((sym) => {
@@ -430,10 +446,10 @@ export async function syncMonthlySales(
       const deadline = new Promise<never>((_, rej) => {
         timer = setTimeout(
           () => rej(new Error("timeout")),
-          (FETCH_TIMEOUT_MS * MONTHLY_SALES_DEPTH) / 3,
+          (FETCH_TIMEOUT_MS * Math.max(maxMonths, 3)) / 3,
         );
       });
-      const fetching = fetchMonthlySales(symbol, MONTHLY_SALES_DEPTH);
+      const fetching = fetchMonthlySales(symbol, maxMonths);
       fetching.catch(() => {}); // orphan guard: never let this reject unhandled
 
       const sales: MonthlyReportResult[] = await withRetry(() =>
@@ -442,12 +458,29 @@ export async function syncMonthlySales(
         if (timer) clearTimeout(timer);
       });
 
+      // Dedup: which month_ends do we already have for this symbol?
+      const knownRows = await sql<{ month_end: Date | string }[]>`
+        SELECT month_end FROM monthly_sales
+        WHERE symbol = ${symbol}
+          AND fetched_at > NOW() - (${skipKnownDays} || ' days')::interval
+      `;
+      const known = new Set(knownRows.map((r) =>
+        r.month_end instanceof Date
+          ? r.month_end.toISOString().slice(0, 10)
+          : String(r.month_end).slice(0, 10),
+      ));
+
       const fx = await resolveFxContext(sql);
 
+      let written = 0;
       for (const s of sales) {
         const monthEnd = toIsoDate(
           jalaliToGregorian(s.periodEnd.jy, s.periodEnd.jm, s.periodEnd.jd),
         );
+        if (known.has(monthEnd)) {
+          skippedKnown++;
+          continue;
+        }
         const d: any = s.detail ?? {};
         await upsertMonthlySalesRow(sql, fx, {
           symbol,
@@ -462,8 +495,12 @@ export async function syncMonthlySales(
           serviceRial: num(d.serviceMonthly),
         });
         count++;
+        written++;
       }
-      console.log(`  [${symbol}] ✓ ${sales.length} monthly sales records`);
+      console.log(
+        `  [${symbol}] ✓ ${written} monthly sales records` +
+          (sales.length - written ? ` (${sales.length - written} already in DB, skipped)` : ""),
+      );
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error(`  [${symbol}] ✗ ${msg.slice(0, 160)}`);
@@ -471,12 +508,23 @@ export async function syncMonthlySales(
     await sleep(DELAY_MS);
   });
 
+  if (skippedKnown) {
+    console.log(`  ↷ ${skippedKnown} month(s) already in DB — skipped (dedup)`);
+  }
   if (skippedForThrottle) {
     console.warn(
       `  ⚠ ${skippedForThrottle} symbols skipped — ${codalThrottleStatus()}`,
     );
   }
   return count;
+}
+
+/** Only the most recent month per symbol — the daily refresh path. */
+export async function syncLatestMonthlySales(
+  sql: PostgresDb,
+  symbols: string[],
+): Promise<number> {
+  return syncMonthlySales(sql, symbols, { maxMonths: 1 });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1288,4 +1336,51 @@ export async function runFullIngest(sql: PostgresDb): Promise<{
   } finally {
     await closeBrowser();
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Individual remote ingestion phases (for standalone calls)
+// ═══════════════════════════════════════════════════════════════
+
+/** Phase 1: TSETMC symbols + prices → Batch 1b market-cap history. */
+export async function runPricesOnly(sql: PostgresDb): Promise<{ stocks: number; prices: number; mcap: number }> {
+  console.log("\n=== Phase 1: TSETMC symbols + prices ===");
+  const snapshots = await scrapeAllSymbols();
+  const stocksCount = await upsertStocks(sql, snapshots);
+  const priceCount = await insertPrices(sql, snapshots);
+
+  console.log("\n=== Phase 1b: Market-cap history ===");
+  const mcapCount = await syncMarketCapHistory(sql);
+
+  return { stocks: stocksCount, prices: priceCount, mcap: mcapCount };
+}
+
+/** Phase 2: Codal monthly sales. `full=true` backfills history; default = latest month only. */
+export async function runMonthlySalesOnly(
+  sql: PostgresDb,
+  full = false,
+): Promise<number> {
+  const syms = WATCHLIST.map((w) => w.sym);
+  console.log(`\n=== Phase 2: Codal monthly sales (${full ? "full backfill" : "latest month only"}) ===`);
+  const count = full
+    ? await syncMonthlySales(sql, syms)
+    : await syncLatestMonthlySales(sql, syms);
+  console.log(`  [sales] upserted ${count} monthly sales records`);
+  return count;
+}
+
+/** Phase 3: Codal quarterly financials. */
+export async function runQuarterlyOnly(sql: PostgresDb): Promise<number> {
+  const syms = WATCHLIST.map((w) => w.sym);
+  console.log("\n=== Phase 3: Codal quarterly financials ===");
+  const count = await syncQuarterlyFinancials(sql, syms);
+  console.log(`  [quarterly] upserted ${count} quarterly financial records`);
+  return count;
+}
+
+/** Phase 5: Recalculate rankings. */
+export async function runRankingsOnly(sql: PostgresDb): Promise<void> {
+  console.log("\n=== Phase 5: Rankings ===");
+  await refreshRankings(sql);
+  console.log("  [rankings] completed");
 }

@@ -2,6 +2,11 @@ import {
   ingestArchiveForSymbol,
   ingestArchiveForSymbols,
   runFullIngest,
+  recomputeForwardPe,
+  runPricesOnly,
+  runMonthlySalesOnly,
+  runQuarterlyOnly,
+  runRankingsOnly,
   isCodalCoolingDown,
   codalThrottleStatus,
   WATCHLIST,
@@ -447,6 +452,292 @@ export function registerIngestRoutes(server: FastifyInstance): void {
         return reply.send({ ...out, throttle: codalThrottleStatus() });
       } catch (e) {
         syncReject(e);
+        return fail(reply, e);
+      }
+    },
+  );
+
+  // ── P/E recomputation ────────────────────────────────────────
+
+  server.get(
+    "/api/admin/ingest/pe",
+    {
+      schema: {
+        tags: ["admin"],
+        summary: "Recompute forward P/E for all symbols",
+        description:
+          "Runs only the P/E recomputation phase. Returns the number of rows inserted/updated. Fast (seconds).",
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              ok: { type: "boolean" },
+              peCount: { type: "integer" },
+            },
+          },
+          409: errorSchema,
+          500: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      if (ingestInFlight) return busy(reply);
+      // Single-flight, but NOT async (quick)
+      let p!: Promise<unknown>;
+      let res!: (v: unknown) => void;
+      let rej!: (e: unknown) => void;
+      p = new Promise<unknown>((a, b) => {
+        res = a;
+        rej = b;
+      });
+      if (!tryAcquireIngest("pe refresh", p)) {
+        const f = ingestInFlight!;
+        const since = Math.round((Date.now() - f.startedAt) / 1000);
+        return reply.code(409).send({
+          ok: false as const,
+          error: `P/E refresh busy: ${f.mode} since ${since}s ago — wait or poll /api/admin/ingest/status`,
+          retryAfterSec: 120,
+          ingestMode: f.mode,
+          throttle: codalThrottleStatus(),
+          coolingDown: isCodalCoolingDown(),
+        });
+      }
+      try {
+        const peCount = await recomputeForwardPe(server.db);
+        res({ ok: true as const, peCount });
+        return reply.send({ ok: true, peCount, throttle: codalThrottleStatus() });
+      } catch (e) {
+        rej(e);
+        return fail(reply, e);
+      }
+    },
+  );
+
+  // ── Individual ingestion helpers ────────────────────────────
+
+  /** Phase 1: TSETMC symbols + prices + market-cap */
+  server.get(
+    "/api/admin/ingest/refresh-prices",
+    {
+      schema: {
+        tags: ["admin"],
+        summary: "Refresh TSETMC symbols and prices (Phase 1) + market-cap (Phase 1b)",
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              ok: { type: "boolean" },
+              stocks: { type: "integer" },
+              prices: { type: "integer" },
+              mcap: { type: "integer" },
+            },
+          },
+          409: errorSchema,
+          500: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      if (ingestInFlight) return busy(reply);
+      let p!: Promise<unknown>;
+      let res!: (v: unknown) => void;
+      let rej!: (e: unknown) => void;
+      p = new Promise<unknown>((a, b) => {
+        res = a;
+        rej = b;
+      });
+      if (!tryAcquireIngest("refresh prices", p)) {
+        const f = ingestInFlight!;
+        const since = Math.round((Date.now() - f.startedAt) / 1000);
+        return reply.code(409).send({
+          ok: false as const,
+          error: `Prices refresh busy: ${f.mode} since ${since}s ago — wait or poll /api/admin/ingest/status`,
+          retryAfterSec: 120,
+          ingestMode: f.mode,
+          throttle: codalThrottleStatus(),
+          coolingDown: isCodalCoolingDown(),
+        });
+      }
+      try {
+        const { stocks, prices, mcap } = await runPricesOnly(server.db);
+        res({ ok: true as const, stocks, prices, mcap });
+        return reply.send({ ok: true, stocks, prices, mcap, throttle: codalThrottleStatus() });
+      } catch (e) {
+        rej(e);
+        return fail(reply, e);
+      }
+    },
+  );
+
+  /** Phase 2: Codal monthly sales */
+  server.get(
+    "/api/admin/ingest/refresh-monthly",
+    {
+      schema: {
+        tags: ["admin"],
+        summary: "Refresh Codal monthly sales (Phase 2). Default = latest month only; ?full=1 backfills.",
+        querystring: {
+          type: "object",
+          properties: {
+            full: {
+              type: "string",
+              enum: ["0", "1", "true", "false"],
+              description: "1 = fetch all months (history). Default 0 = newest month only, skip months already in DB.",
+            },
+          },
+        },
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              ok: { type: "boolean" },
+              salesCount: { type: "integer" },
+              mode: { type: "string", enum: ["full", "latest"] },
+            },
+          },
+          409: errorSchema,
+          500: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      if (ingestInFlight) return busy(reply);
+      let p!: Promise<unknown>;
+      let res!: (v: unknown) => void;
+      let rej!: (e: unknown) => void;
+      p = new Promise<unknown>((a, b) => {
+        res = a;
+        rej = b;
+      });
+      if (!tryAcquireIngest("refresh monthly", p)) {
+        const f = ingestInFlight!;
+        const since = Math.round((Date.now() - f.startedAt) / 1000);
+        return reply.code(409).send({
+          ok: false as const,
+          error: `Monthly refresh busy: ${f.mode} since ${since}s ago — wait or poll /api/admin/ingest/status`,
+          retryAfterSec: 120,
+          ingestMode: f.mode,
+          throttle: codalThrottleStatus(),
+          coolingDown: isCodalCoolingDown(),
+        });
+      }
+      try {
+        const query = req.query as Record<string, unknown>;
+        const full = query?.full === "1" || query?.full === "true";
+        const salesCount = await runMonthlySalesOnly(server.db, full);
+        res({ ok: true as const, salesCount });
+        return reply.send({
+          ok: true,
+          salesCount,
+          mode: full ? "full" : "latest",
+          throttle: codalThrottleStatus(),
+        });
+      } catch (e) {
+        rej(e);
+        return fail(reply, e);
+      }
+    },
+  );
+
+  /** Phase 3: Codal quarterly financials */
+  server.get(
+    "/api/admin/ingest/refresh-quarterly",
+    {
+      schema: {
+        tags: ["admin"],
+        summary: "Refresh Codal quarterly financials (Phase 3)",
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              ok: { type: "boolean" },
+              quarterlyCount: { type: "integer" },
+            },
+          },
+          409: errorSchema,
+          500: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      if (ingestInFlight) return busy(reply);
+      let p!: Promise<unknown>;
+      let res!: (v: unknown) => void;
+      let rej!: (e: unknown) => void;
+      p = new Promise<unknown>((a, b) => {
+        res = a;
+        rej = b;
+      });
+      if (!tryAcquireIngest("refresh quarterly", p)) {
+        const f = ingestInFlight!;
+        const since = Math.round((Date.now() - f.startedAt) / 1000);
+        return reply.code(409).send({
+          ok: false as const,
+          error: `Quarterly refresh busy: ${f.mode} since ${since}s ago — wait or poll /api/admin/ingest/status`,
+          retryAfterSec: 120,
+          ingestMode: f.mode,
+          throttle: codalThrottleStatus(),
+          coolingDown: isCodalCoolingDown(),
+        });
+      }
+      try {
+        const quarterlyCount = await runQuarterlyOnly(server.db);
+        res({ ok: true as const, quarterlyCount });
+        return reply.send({ ok: true, quarterlyCount, throttle: codalThrottleStatus() });
+      } catch (e) {
+        rej(e);
+        return fail(reply, e);
+      }
+    },
+  );
+
+  /** Phase 5: Stock rankings */
+  server.get(
+    "/api/admin/ingest/refresh-rankings",
+    {
+      schema: {
+        tags: ["admin"],
+        summary: "Recalculate stock rankings (Phase 5)",
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              ok: { type: "boolean" },
+              message: { type: "string" },
+            },
+          },
+          409: errorSchema,
+          500: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      if (ingestInFlight) return busy(reply);
+      let p!: Promise<unknown>;
+      let res!: (v: unknown) => void;
+      let rej!: (e: unknown) => void;
+      p = new Promise<unknown>((a, b) => {
+        res = a;
+        rej = b;
+      });
+      if (!tryAcquireIngest("refresh rankings", p)) {
+        const f = ingestInFlight!;
+        const since = Math.round((Date.now() - f.startedAt) / 1000);
+        return reply.code(409).send({
+          ok: false as const,
+          error: `Rankings refresh busy: ${f.mode} since ${since}s ago — wait or poll /api/admin/ingest/status`,
+          retryAfterSec: 120,
+          ingestMode: f.mode,
+          throttle: codalThrottleStatus(),
+          coolingDown: isCodalCoolingDown(),
+        });
+      }
+      try {
+        await runRankingsOnly(server.db);
+        res({ ok: true as const, message: "Rankings updated" });
+        return reply.send({ ok: true, message: "Rankings updated", throttle: codalThrottleStatus() });
+      } catch (e) {
+        rej(e);
         return fail(reply, e);
       }
     },

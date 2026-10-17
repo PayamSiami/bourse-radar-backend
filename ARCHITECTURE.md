@@ -93,7 +93,7 @@ npm run dev
           ▼
 ┌────────────────────────────────────────────────────────────────┐
 │  6. FRONTEND (Next.js — not part of this backend blueprint)     │
-│  Serves via this API at http://localhost:8001                   │
+│  Serves via this API at http://localhost:8001                 │
 └────────────────────────────────────────────────────────────────┘
 ```
 

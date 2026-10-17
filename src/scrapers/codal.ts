@@ -11,9 +11,16 @@
  *
  * All dates from Codal use Persian digits (۰-۹); we normalize to ASCII.
  */
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Page,
+} from "playwright";
 
+import { createInterface } from "node:readline/promises";
+import { stdin, stdout } from "node:process";
 import { jalaliToGregorian, toIsoDate } from "#utils/jalali";
-import { chromium, type Browser } from "playwright";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36";
@@ -50,7 +57,11 @@ export class CodalHttpError extends Error {
   readonly status: number;
   readonly retryAfterMs: number | null;
 
-  constructor(status: number, message: string, retryAfterMs: number | null = null) {
+  constructor(
+    status: number,
+    message: string,
+    retryAfterMs: number | null = null,
+  ) {
     super(message);
     this.name = "CodalHttpError";
     this.status = status;
@@ -78,6 +89,67 @@ const COOLDOWN_MS = 120_000; // how long we stay silent once tripped
 
 let throttleStamps: number[] = [];
 let breakerOpenUntil = 0;
+
+function parseRetryAfterHeader(raw: string | undefined): number | null {
+  if (!raw) return null;
+
+  const seconds = Number(raw);
+
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds * 1000;
+  }
+
+  const timestamp = Date.parse(raw);
+
+  if (!Number.isNaN(timestamp)) {
+    return Math.max(0, timestamp - Date.now());
+  }
+
+  return null;
+}
+
+function looksLikeCaptcha(html: string): boolean {
+  return /captcha|verify you are human|access denied|درخواست غیرمجاز|عبارت امنیتی/i.test(
+    html.slice(0, 20_000),
+  );
+}
+
+async function codalGetText(
+  url: string,
+  headers: Record<string, string>,
+): Promise<string> {
+  const context = await getCodalContext();
+
+  const response = await context.request.get(url, {
+    headers,
+    timeout: 60_000,
+  });
+
+  const body = await response.text();
+  const status = response.status();
+
+  // A challenge can be returned with HTTP 200, 403, or 429.
+  if (status === 429 || status === 403 || looksLikeCaptcha(body)) {
+    await pauseForManualCaptcha(url);
+
+    // Use 429 to let the existing RateLimiter retry after the pause.
+    throw new CodalHttpError(
+      429,
+      `Codal challenge encountered (HTTP ${status}): ${url}`,
+      parseRetryAfterHeader(response.headers()["retry-after"]),
+    );
+  }
+
+  if (!response.ok()) {
+    throw new CodalHttpError(
+      status,
+      `Codal HTTP ${status}: ${url}`,
+      parseRetryAfterHeader(response.headers()["retry-after"]),
+    );
+  }
+
+  return body;
+}
 
 function noteThrottle(retryAfterMs: number | null = null): void {
   const now = Date.now();
@@ -119,21 +191,6 @@ export function codalThrottleStatus(): string {
   return throttleStamps.length
     ? `throttled ${throttleStamps.length}/${THRESHOLD}`
     : "ok";
-}
-
-
-/** Parse `Retry-After`, which may be delta-seconds or an HTTP date. */
-function parseRetryAfter(res: Response): number | null {
-  const raw = res.headers.get("retry-after");
-  if (!raw) return null;
-
-  const secs = Number(raw);
-  if (Number.isFinite(secs) && secs >= 0) return secs * 1000;
-
-  const when = Date.parse(raw);
-  if (!Number.isNaN(when)) return Math.max(0, when - Date.now());
-
-  return null;
 }
 
 class RateLimiter {
@@ -195,8 +252,7 @@ class RateLimiter {
         return out;
       } catch (e) {
         const status = e instanceof CodalHttpError ? e.status : 0;
-        const retryAfter =
-          e instanceof CodalHttpError ? e.retryAfterMs : null;
+        const retryAfter = e instanceof CodalHttpError ? e.retryAfterMs : null;
         const retryable = status === 429 || (status >= 500 && status < 600);
         if (!retryable) throw e;
 
@@ -239,27 +295,45 @@ const reportLimiter = new RateLimiter(1200);
 // Browser singleton — for quarterly income statements only
 // ═══════════════════════════════════════════════════════════════
 
-let browserInstance: Browser | null = null;
-/** In-flight launch, so concurrent callers share one Chrome instead of racing. */
-let browserLaunch: Promise<Browser> | null = null;
 /**
  * Set when a launch fails in a way that will not fix itself on retry
  * (e.g. `spawn EPERM` from a sandbox). Without this, every letter in a
  * backfill retries a doomed launch and floods the log with the same error.
  */
+
+// ─────────────────────────────────────────────────────────────
+// Shared browser + context for all Codal requests
+// ─────────────────────────────────────────────────────────────
+
+let browserInstance: Browser | null = null;
+let browserLaunch: Promise<Browser> | null = null;
 let browserUnavailable: string | null = null;
 
+let codalContext: BrowserContext | null = null;
+let captchaPage: Page | null = null;
+let captchaPause: Promise<void> | null = null;
+
 async function getBrowser(): Promise<Browser> {
-  if (browserInstance) return browserInstance;
+  if (browserInstance?.isConnected()) return browserInstance;
   if (browserUnavailable) throw new Error(browserUnavailable);
   if (browserLaunch) return browserLaunch;
 
   browserLaunch = chromium
-    .launch({ headless: true, channel: "chrome" }) // fallback: "msedge"
-    .then((b) => {
-      browserInstance = b;
+    .launch({
+      headless: false, // Visible Chrome so you can solve CAPTCHA manually
+      channel: "chrome",
+    })
+    .then((browser) => {
+      browserInstance = browser;
       browserUnavailable = null;
-      return b;
+
+      browser.on("disconnected", () => {
+        browserInstance = null;
+        codalContext = null;
+        captchaPage = null;
+      });
+
+      return browser;
     })
     .finally(() => {
       browserLaunch = null;
@@ -267,21 +341,206 @@ async function getBrowser(): Promise<Browser> {
 
   try {
     return await browserLaunch;
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    // EPERM/ENOENT/EACCES are environmental — the process cannot spawn
-    // Chrome here, so stop rather than retry per letter.
-    if (/spawn (EPERM|ENOENT|EACCES)|not found|access is denied/i.test(msg)) {
-      browserUnavailable = `Browser unavailable: ${msg.split("\n")[0]}`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (
+      /spawn (EPERM|ENOENT|EACCES)|not found|access is denied/i.test(message)
+    ) {
+      browserUnavailable = `Browser unavailable: ${message.split("\n")[0]}`;
     }
+
     browserInstance = null;
-    throw e;
+    throw error;
   }
 }
 
+async function getCodalContext(): Promise<BrowserContext> {
+  if (codalContext) {
+    return codalContext;
+  }
+
+  const browser = await getBrowser();
+
+  codalContext = await browser.newContext({
+    userAgent: UA,
+    locale: "fa-IR",
+    extraHTTPHeaders: {
+      "Accept-Language": "fa-IR,fa;q=0.9,en;q=0.8",
+    },
+  });
+
+  return codalContext;
+}
+
+/**
+ * After a manual CAPTCHA solve, verify the clearance cookie actually landed
+ * on the host we need to query. Codal's WAF frequently sets the challenge
+ * cookie on `codal.ir` (or on the browser's default partition), but the API
+ * lives at `search.codal.ir`. Playwright's `context.request.get` will not
+ * carry a cookie that isn't scoped to the request's host, so the next call
+ * looks like a fresh client and re-trips the WAF.
+ *
+ * We check both hosts explicitly and, if the API host is missing the cookie,
+ * we visit the API host in a real page so the browser itself receives and
+ * stores it before we retry via `context.request`.
+ */
+async function ensureClearanceCookie(apiUrl: string): Promise<void> {
+  const context = await getCodalContext();
+  const apiHost = new URL(apiUrl).host; // e.g. search.codal.ir
+
+  const readCookies = async (host: string) => {
+    try {
+      return await context.cookies(`https://${host}`);
+    } catch {
+      return [];
+    }
+  };
+
+  const apiCookies = await readCookies(apiHost);
+  const baseCookies = await readCookies("www.codal.ir");
+  const rootCookies = await readCookies("codal.ir");
+
+  // Heuristic: Codal's clearance cookies are typically named with a
+  // challenge-ish prefix. We accept any non-session-looking cookie as
+  // evidence the WAF let us through.
+  const hasClearance = (cookies: Awaited<ReturnType<typeof readCookies>>) =>
+    cookies.some((c) => {
+      const n = c.name.toLowerCase();
+      return (
+        n.includes("captcha") ||
+        n.includes("clearance") ||
+        n.includes("cf_") ||
+        n.includes("incap") ||
+        n.includes("codal") ||
+        n.includes("asp") // ASP.NET session cookies also indicate a real visit
+      );
+    });
+
+  if (hasClearance(apiCookies)) {
+    console.log(
+      `[codal] clearance cookie present on ${apiHost} (${apiCookies.length} cookies)`,
+    );
+    return;
+  }
+
+  console.warn(
+    `[codal] no clearance cookie on ${apiHost} — ` +
+      `base=${baseCookies.length} root=${rootCookies.length}. ` +
+      `Visiting ${apiHost} in the browser to collect it.`,
+  );
+
+  // Visit the API host in a real page so the browser receives Set-Cookie.
+  const page = await context.newPage();
+  try {
+    await page.goto(`https://${apiHost}/`, {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
+    // Give the WAF a moment to issue the cookie.
+    await page.waitForTimeout(1500);
+  } catch (e) {
+    console.warn(
+      `[codal] visit to ${apiHost} failed:`,
+      e instanceof Error ? e.message : String(e),
+    );
+  } finally {
+    await page.close().catch(() => undefined);
+  }
+
+  const after = await readCookies(apiHost);
+  if (hasClearance(after)) {
+    console.log(
+      `[codal] clearance cookie acquired on ${apiHost} (${after.length} cookies)`,
+    );
+  } else {
+    console.warn(
+      `[codal] still no clearance cookie on ${apiHost} after visit ` +
+        `(${after.length} cookies). The retry may still hit the WAF.`,
+    );
+  }
+}
+
+/**
+ * Open the Codal homepage in visible Chrome and wait for manual confirmation.
+ * Requests are paused until you press Enter in the terminal.
+ *
+ * We deliberately do NOT pass the failing API URL to the browser. Codal's
+ * WAF only renders a solvable challenge on the site root; hitting the API
+ * path directly just returns a 403/ASP.NET error that cannot be solved.
+ *
+ * After the solve we verify the clearance cookie is scoped to the API host,
+ * not just to codal.ir — see {@link ensureClearanceCookie}.
+ */
+const CODAL_HOME = "https://www.codal.ir/";
+
+async function pauseForManualCaptcha(apiUrl: string): Promise<void> {
+  if (captchaPause) {
+    return captchaPause;
+  }
+
+  captchaPause = (async () => {
+    const context = await getCodalContext();
+
+    if (!captchaPage || captchaPage.isClosed()) {
+      captchaPage = await context.newPage();
+    }
+
+    console.warn("\n[codal] CAPTCHA / access challenge detected.");
+    console.warn("[codal] Requests are paused.");
+    console.warn(`[codal] Failed URL: ${apiUrl}`);
+    console.warn(`[codal] Opening homepage for solving: ${CODAL_HOME}`);
+
+    await captchaPage
+      .goto(CODAL_HOME, {
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      })
+      .catch((error: unknown) => {
+        console.warn(
+          "[codal] Page navigation warning:",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+
+    const terminal = createInterface({
+      input: stdin,
+      output: stdout,
+    });
+
+    try {
+      await terminal.question(
+        "\nSolve the challenge in Chrome (on codal.ir). When finished, press Enter here to retry...\n",
+      );
+    } finally {
+      terminal.close();
+    }
+
+    // ── Verify the clearance cookie landed on the API host ──
+    await ensureClearanceCookie(apiUrl);
+
+    console.log("[codal] Retrying the interrupted request.");
+  })().finally(() => {
+    captchaPause = null;
+  });
+
+  return captchaPause;
+}
+
 export async function closeBrowser(): Promise<void> {
+  if (captchaPage && !captchaPage.isClosed()) {
+    await captchaPage.close().catch(() => undefined);
+  }
+
+  captchaPage = null;
+
+  if (codalContext) {
+    await codalContext.close().catch(() => undefined);
+    codalContext = null;
+  }
+
   if (browserInstance) {
-    await browserInstance.close();
+    await browserInstance.close().catch(() => undefined);
     browserInstance = null;
   }
 }
@@ -424,30 +683,26 @@ export async function searchLetters(
     if (v === null || v === undefined || v === "") continue;
     q.append(k, String(v));
   }
+  const url = `${CODAL_SEARCH}/v2/q?${q.toString()}`;
+
   return searchLimiter.run(async () => {
-    const res = await fetch(`${CODAL_SEARCH}/v2/q?${q.toString()}`, {
-      headers: H,
-    });
-    if (!res.ok) {
-      const text = (await res.text()).slice(0, 200);
-      throw new CodalHttpError(
-        res.status,
-        `Codal ${res.status}: ${text}`,
-        parseRetryAfter(res),
-      );
-    }
-    const data = (await res.json()) as { Letters?: Record<string, unknown>[] };
-    return (data.Letters ?? []).map((l) => ({
-      tracingNo: Number(l.TracingNo ?? 0),
-      symbol: String(l.Symbol ?? ""),
-      companyName: String(l.CompanyName ?? ""),
-      title: String(l.Title ?? ""),
-      letterCode: String(l.LetterCode ?? ""),
-      publishDateTime: String(l.PublishDateTime ?? ""),
-      url: String(l.Url ?? ""),
-      hasHtml: Boolean(l.HasHtml),
-      hasPdf: Boolean(l.HasPdf),
-      hasExcel: Boolean(l.HasExcel),
+    const body = await codalGetText(url, H);
+
+    const data = JSON.parse(body) as {
+      Letters?: Record<string, unknown>[];
+    };
+
+    return (data.Letters ?? []).map((letter) => ({
+      tracingNo: Number(letter.TracingNo ?? 0),
+      symbol: String(letter.Symbol ?? ""),
+      companyName: String(letter.CompanyName ?? ""),
+      title: String(letter.Title ?? ""),
+      letterCode: String(letter.LetterCode ?? ""),
+      publishDateTime: String(letter.PublishDateTime ?? ""),
+      url: String(letter.Url ?? ""),
+      hasHtml: Boolean(letter.HasHtml),
+      hasPdf: Boolean(letter.HasPdf),
+      hasExcel: Boolean(letter.HasExcel),
     }));
   });
 }
@@ -911,22 +1166,12 @@ export async function fetchReportHtml(relativeUrl: string): Promise<string> {
     ? `${CODAL_BASE}${relativeUrl}`
     : `${CODAL_BASE}/${relativeUrl}`;
 
-  return reportLimiter.run(async () => {
-    const res = await fetch(url, {
-      headers: {
-        ...H,
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      },
-    });
-    if (!res.ok) {
-      throw new CodalHttpError(
-        res.status,
-        `Codal report fetch ${res.status}: ${url}`,
-        parseRetryAfter(res),
-      );
-    }
-    return res.text();
-  });
+  return reportLimiter.run(() =>
+    codalGetText(url, {
+      ...H,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }),
+  );
 }
 
 /**
@@ -935,11 +1180,7 @@ export async function fetchReportHtml(relativeUrl: string): Promise<string> {
  * "صورت سود و زیان" from `#ctl00_ddlTable`.
  */
 async function fetchIncomeStatementHtml(relativeUrl: string): Promise<string> {
-  const browser = await getBrowser();
-  const context = await browser.newContext({
-    userAgent: UA,
-    locale: "fa-IR",
-  });
+  const context = await getCodalContext();
   const page = await context.newPage();
 
   const url = relativeUrl.startsWith("/")
@@ -947,7 +1188,22 @@ async function fetchIncomeStatementHtml(relativeUrl: string): Promise<string> {
     : `${CODAL_BASE}/${relativeUrl}`;
 
   try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
+
+    const initialHtml = await page.content();
+
+    if (looksLikeCaptcha(initialHtml)) {
+      await pauseForManualCaptcha(url);
+
+      // Reload after you solve the challenge.
+      await page.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      });
+    }
 
     // Wait for network to settle (Angular/ASP.NET)
     try {
@@ -983,8 +1239,8 @@ async function fetchIncomeStatementHtml(relativeUrl: string): Promise<string> {
     await page.waitForTimeout(1000);
     return await page.content();
   } finally {
-    await page.close();
-    await context.close();
+    await page.close().catch(() => undefined);
+    // Do not close the shared context; its cookies are needed for retries.
   }
 }
 
@@ -1157,7 +1413,10 @@ export async function fetchQuarterlyFinancials(
   // (not just page 1). Codal caps at 20 letters per page.
   const allLetters: CodalLetter[] = [];
   for (let page = 1; page <= 20; page++) {
-    const letters = await searchLetters(symbol, { LetterType: "6", PageNumber: String(page) });
+    const letters = await searchLetters(symbol, {
+      LetterType: "6",
+      PageNumber: String(page),
+    });
     if (letters.length === 0) break;
     allLetters.push(...letters);
     if (letters.length < 20) break;

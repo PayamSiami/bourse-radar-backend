@@ -25,6 +25,15 @@ interface RouteDefinition {
 export async function registerRoutes(server: FastifyInstance) {
   console.log("→ Registering routes");
 
+  // Global middleware: add freshness & cache headers to all responses
+  server.addHook("onSend", async (req, reply) => {
+    const now = Date.now();
+    const timestamp = new Date(now).toISOString();
+    reply.header("X-Server-Timestamp", timestamp);
+    reply.header("X-Request-Id", req.id);
+    reply.header("X-Server-Time", Math.floor(now / 1000).toString());
+  });
+
   const routes: RouteDefinition[] = [
     {
       name: "Health",

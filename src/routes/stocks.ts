@@ -161,6 +161,153 @@ export async function registerStocksRoutes(
     },
   );
 
+  // GET /api/stocks/bulk – list by symbols
+  server.get(
+    `${prefix}/bulk`,
+    {
+      schema: {
+        tags: ["stocks"],
+        description: "Batch fetch multiple TSE symbols at once",
+        querystring: {
+          type: "object",
+          properties: {
+            symbols: {
+              type: "string",
+              description: "Comma-separated symbols: فولاد,فخوز,فملی",
+            },
+            page: { type: "integer", minimum: 1, default: 1 },
+            limit: { type: "integer", minimum: 1, maximum: 200, default: 50 },
+            sector: { type: "string" },
+            min_confidence: {
+              type: "string",
+              enum: ["high", "medium", "low", "non_calculable"],
+            },
+            has_forward_pe: { type: "boolean" },
+          },
+        },
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              data: { type: "array", items: { type: "object" } },
+              meta: {
+                type: "object",
+                properties: {
+                  page: { type: "integer" },
+                  limit: { type: "integer" },
+                  hasMore: { type: "boolean" },
+                  count: { type: "integer" },
+                },
+              },
+              cachedAt: { type: "string" },
+            },
+          },
+        },
+      },
+    },
+    async (req: any, reply: any) => {
+      const q = QuerySchema.safeParse(req.query);
+      if (!q.success) {
+        return reply.status(400).send({ error: q.error.flatten() });
+      }
+
+      const symbols = req.query.symbols
+        ? (req.query.symbols as string)
+            .split(",")
+            .map((s: string) => s.trim().toUpperCase())
+        : [];
+      if (!Array.isArray(symbols) || symbols.length === 0) {
+        return reply.status(400).send({
+          error: "symbols param is required and should be comma-separated",
+        });
+      }
+
+      const offset = (q.data.page - 1) * q.data.limit;
+      const confList = confidenceLevels(q.data.min_confidence);
+
+      // Use a dynamic cache key that includes the symbols list
+      const cacheKey = `stocks:bulk:${symbols.join(",")}:${q.data.limit}`;
+      try {
+        const cached = await server.redis.get(cacheKey);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Date.now() - parsed._cachedAt < 300_000) {
+            return reply.send(parsed.data);
+          }
+        }
+      } catch (e) {
+        server.log.warn({ err: e }, "stocks bulk cache read failed");
+      }
+
+      // Query DB with symbols filter using ANY()
+      const rows = await server.db`
+        SELECT
+          s.symbol, s.name, s.sector,
+          s.shares_outstanding,
+          p.last_price, p.volume, p."timestamp",
+          fp.forward_pe, fp.estimated_annual_eps,
+          fp.confidence, fp.confidence_score,
+          fp.disclaimer,
+          fr.attractiveness_score,
+          fr."rank"
+        FROM stocks s
+        JOIN LATERAL (
+          SELECT last_price, volume, "timestamp"
+          FROM prices
+          WHERE symbol = s.symbol
+          ORDER BY "timestamp" DESC LIMIT 1
+        ) p ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT forward_pe, estimated_annual_eps, confidence, confidence_score,
+                 disclaimer, calculated_at
+          FROM forward_pe
+          WHERE symbol = s.symbol
+          ORDER BY calculated_at DESC LIMIT 1
+        ) fp ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT attractiveness_score, "rank"
+          FROM stock_rankings
+          WHERE symbol = s.symbol
+          ORDER BY calculated_at DESC LIMIT 1
+        ) fr ON TRUE
+        WHERE s.symbol = ANY(${symbols})
+          AND (${q.data.sector ? server.db`s.sector = ${q.data.sector}` : server.db`TRUE`})
+          AND (${q.data.has_forward_pe === true ? server.db`fp.forward_pe IS NOT NULL` : server.db`TRUE`})
+          AND (${
+            confList
+              ? server.db`fp.confidence = ANY(${confList})`
+              : server.db`TRUE`
+          })
+        ORDER BY fr.attractiveness_score DESC NULLS LAST
+        LIMIT ${q.data.limit} OFFSET ${offset}
+      `;
+
+      const result = {
+        data: rows,
+        meta: {
+          page: q.data.page,
+          limit: q.data.limit,
+          hasMore: rows.length === q.data.limit,
+          count: rows.length,
+          symbols: symbols,
+        },
+        cachedAt: new Date().toISOString(),
+      };
+
+      try {
+        await server.redis.setex(
+          cacheKey,
+          300,
+          JSON.stringify({ data: result, _cachedAt: Date.now() }),
+        );
+      } catch (e) {
+        server.log.warn({ err: e }, "stocks bulk cache write failed");
+      }
+
+      return reply.send(result);
+    },
+  );
+
   // GET {prefix}/:symbol
   server.get(
     `${prefix}/:symbol`,
