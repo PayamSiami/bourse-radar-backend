@@ -14,15 +14,19 @@ export async function registerRedis(server: FastifyInstance) {
   // Without keepalive the next cache hit/rate-limit write throws ECONNRESET
   // and ioredis reconnects — noisy but fail-open. Keep the socket alive.
   const redis = new Redis(config.redis.url, {
-    connectTimeout: 5_000,
     maxRetriesPerRequest: 3,
-    retryStrategy: (times: number) => Math.min(times * 500, 9_500),
+    enableReadyCheck: true,
+    enableOfflineQueue: true,
+    keepAlive: 10_000,
+    connectTimeout: 10_000,
+    // TCP keepalive at the socket level (ms). 0 = OS default, which on
+    // Windows is ~2h — too late. 10s matches Redis timeout defaults.
+    family: 0,
+    retryStrategy: (times: number) => Math.min(times * 200, 5_000),
     reconnectOnError: (err: Error) => {
-      // Only reconnect on fatal errors, not on auth/message errors.
-      const msg = err.message?.toLowerCase() || "";
-      return /econnreset|epipe|etimedout|readonly|cannot connect|destination host/i.test(
-        msg,
-      );
+      const msg = err.message || "";
+      // Reconnect on the idle-drop class of errors; don't loop on AUTH.
+      return /ECONNRESET|EPIPE|ETIMEDOUT|READONLY/i.test(msg);
     },
   });
 
