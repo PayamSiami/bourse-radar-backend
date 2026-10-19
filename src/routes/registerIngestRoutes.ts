@@ -13,6 +13,7 @@ import {
 } from "#services/ingest";
 import type { ArchiveResult } from "#services/ingest";
 import type { FastifyInstance, FastifyReply } from "fastify";
+import { jalaliToGregorian, toIsoDate } from "#utils/jalali";
 
 /**
  * Single-flight guard + async execution.
@@ -69,6 +70,54 @@ function busy(reply: FastifyReply) {
   });
 }
 
+/** Redis is optional at the type level; resolve it defensively. */
+type RedisLike = {
+  keys: (pattern: string) => Promise<string[]>;
+  del: (...keys: string[]) => Promise<number>;
+};
+
+function getRedis(server: FastifyInstance): RedisLike | undefined {
+  return (server as unknown as { redis?: RedisLike }).redis;
+}
+
+/**
+ * Every read route caches its JSON for 60–600s. Re-running `/ingest/pe` then
+ * hitting `/api/stocks` used to return the STALE list (showing only the rows
+ * that existed when the cache was filled), which looks exactly like "ingest
+ * did nothing". Call this after any mutation so GETs recompute from the DB.
+ */
+const READ_CACHE_PATTERNS = [
+  "v1:*",
+  "stocks:*",
+  "stock_detail:*",
+  "rankings:*",
+  "suggestions:*",
+  "orderbook:*",
+];
+
+async function bustReadCaches(server: FastifyInstance): Promise<number> {
+  const redis = getRedis(server);
+  if (!redis) return 0;
+  try {
+    let flushed = 0;
+    for (const pattern of READ_CACHE_PATTERNS) {
+      const keys = await redis.keys(pattern);
+      if (keys.length) {
+        await redis.del(...keys);
+        flushed += keys.length;
+      }
+    }
+    if (flushed) {
+      server.log.info({ flushed }, "[cache] invalidated read caches");
+      console.log(`[cache] invalidated ${flushed} cached GET key(s)`);
+    }
+    return flushed;
+  } catch (e) {
+    server.log.warn({ err: e }, "[cache] invalidation failed (non-fatal)");
+    return 0;
+  }
+}
+
 /**
  * Merged ingest route. One endpoint, driven by query params:
  *
@@ -83,14 +132,14 @@ function busy(reply: FastifyReply) {
  * same helpers.
  */
 export function registerIngestRoutes(server: FastifyInstance): void {
-  const DEFAULT_FROM = "1402/01/01";
+  const DEFAULT_FROM = "1405/01/01";
   const DEFAULT_TO = "1405/12/29";
 
   const JALALI_RE = /^\d{4}[/-]\d{1,2}[/-]\d{1,2}$/;
 
-  const fullPipeline = async () => ({
+  const fullPipeline = async (minYear?: number, maxYear?: number, maxMonthEnd?: Date) => ({
     ok: true as const,
-    ...(await runFullIngest(server.db)),
+    ...(await runFullIngest(server.db, minYear, maxYear, maxMonthEnd)),
   });
 
   const summarise = (results: ArchiveResult[]) => {
@@ -151,6 +200,16 @@ export function registerIngestRoutes(server: FastifyInstance): void {
         : fallback;
     };
     return { from: pick("from", DEFAULT_FROM), to: pick("to", DEFAULT_TO) };
+  };
+
+  // Parse an "YYYY/MM/DD" (or YYYY-MM-DD) Jalali date into a Gregorian Date
+  const parseJalaliBound = (raw?: string): Date | null => {
+    if (!raw) return null;
+    const m = raw.trim().match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+    if (!m) return null;
+    const [_, jy, jm, jd] = m;
+    if (!jy || !jm || !jd) return null;
+    return new Date(toIsoDate(jalaliToGregorian(+jy, +jm, +jd)));
   };
 
   const fail = (reply: FastifyReply, e: unknown) => {
@@ -231,6 +290,8 @@ export function registerIngestRoutes(server: FastifyInstance): void {
       lettersFound: { type: "integer" },
       reportsParsed: { type: "integer" },
       rowsUpserted: { type: "integer" },
+      skippedKnown: { type: "integer" },
+      skippedOutOfRange: { type: "integer" },
       errors: { type: "array", items: { type: "string" } },
     },
   } as const;
@@ -241,6 +302,8 @@ export function registerIngestRoutes(server: FastifyInstance): void {
       lettersFound: { type: "integer" },
       reportsParsed: { type: "integer" },
       rowsUpserted: { type: "integer" },
+      skippedKnown: { type: "integer" },
+      skippedOutOfRange: { type: "integer" },
       errors: { type: "integer" },
     },
   } as const;
@@ -264,6 +327,8 @@ export function registerIngestRoutes(server: FastifyInstance): void {
       lettersFound: { type: "integer" },
       reportsParsed: { type: "integer" },
       rowsUpserted: { type: "integer" },
+      skippedKnown: { type: "integer" },
+      skippedOutOfRange: { type: "integer" },
       errors: {
         oneOf: [
           { type: "array", items: { type: "string" } },
@@ -406,14 +471,23 @@ export function registerIngestRoutes(server: FastifyInstance): void {
           ? `archive ${targets[0]}`
           : `archive ${targets.length} symbols`;
 
+      // Parse date bounds from query (for full pipeline only)
+      const bounds = boundsFrom(query);
+      const startDate =
+        parseJalaliBound(bounds.from) ?? parseJalaliBound(DEFAULT_FROM);
+      const endDate = parseJalaliBound(bounds.to) ?? parseJalaliBound(DEFAULT_TO);
+      const minYear = endDate ? startDate?.getFullYear() : undefined;
+      const maxYear = endDate ? endDate?.getFullYear() : undefined;
+      const maxMonthEnd = endDate ?? undefined;
+
       const wantsAsync = shouldRunAsync(query, targets);
 
       if (wantsAsync) {
         // Start in background, reply immediately — this is what fixes
         // socket hang up on VPS (Traefik/nginx close idle sockets after 60s).
         const promise = targets
-          ? runArchive(targets, boundsFrom(query).from, boundsFrom(query).to)
-          : fullPipeline();
+          ? runArchive(targets, bounds.from, bounds.to)
+          : fullPipeline(minYear, maxYear, maxMonthEnd);
 
         if (!tryAcquireIngest(mode, promise as Promise<unknown>)) return busy(reply);
 
@@ -446,8 +520,8 @@ export function registerIngestRoutes(server: FastifyInstance): void {
 
       try {
         const out = targets
-          ? await runArchive(targets, boundsFrom(query).from, boundsFrom(query).to)
-          : await fullPipeline();
+          ? await runArchive(targets, bounds.from, bounds.to)
+          : await fullPipeline(minYear, maxYear, maxMonthEnd);
         syncResolve(out);
         return reply.send({ ...out, throttle: codalThrottleStatus() });
       } catch (e) {
@@ -466,13 +540,14 @@ export function registerIngestRoutes(server: FastifyInstance): void {
         tags: ["admin"],
         summary: "Recompute forward P/E for all symbols",
         description:
-          "Runs only the P/E recomputation phase. Returns the number of rows inserted/updated. Fast (seconds).",
+          "Runs only the P/E recomputation phase. Returns the number of rows inserted/updated, plus how many cached GET keys were invalidated. Fast (seconds).",
         response: {
           200: {
             type: "object",
             properties: {
               ok: { type: "boolean" },
               peCount: { type: "integer" },
+              cacheBusted: { type: "integer" },
             },
           },
           409: errorSchema,
@@ -504,8 +579,14 @@ export function registerIngestRoutes(server: FastifyInstance): void {
       }
       try {
         const peCount = await recomputeForwardPe(server.db);
+        const cacheBusted = await bustReadCaches(server);
         res({ ok: true as const, peCount });
-        return reply.send({ ok: true, peCount, throttle: codalThrottleStatus() });
+        return reply.send({
+          ok: true,
+          peCount,
+          cacheBusted,
+          throttle: codalThrottleStatus(),
+        });
       } catch (e) {
         rej(e);
         return fail(reply, e);
@@ -560,8 +641,9 @@ export function registerIngestRoutes(server: FastifyInstance): void {
       }
       try {
         const { stocks, prices, mcap } = await runPricesOnly(server.db);
+        const cacheBusted = await bustReadCaches(server);
         res({ ok: true as const, stocks, prices, mcap });
-        return reply.send({ ok: true, stocks, prices, mcap, throttle: codalThrottleStatus() });
+        return reply.send({ ok: true, stocks, prices, mcap, cacheBusted, throttle: codalThrottleStatus() });
       } catch (e) {
         rej(e);
         return fail(reply, e);
@@ -625,11 +707,13 @@ export function registerIngestRoutes(server: FastifyInstance): void {
         const query = req.query as Record<string, unknown>;
         const full = query?.full === "1" || query?.full === "true";
         const salesCount = await runMonthlySalesOnly(server.db, full);
+        const cacheBusted = await bustReadCaches(server);
         res({ ok: true as const, salesCount });
         return reply.send({
           ok: true,
           salesCount,
           mode: full ? "full" : "latest",
+          cacheBusted,
           throttle: codalThrottleStatus(),
         });
       } catch (e) {
@@ -682,8 +766,9 @@ export function registerIngestRoutes(server: FastifyInstance): void {
       }
       try {
         const quarterlyCount = await runQuarterlyOnly(server.db);
+        const cacheBusted = await bustReadCaches(server);
         res({ ok: true as const, quarterlyCount });
-        return reply.send({ ok: true, quarterlyCount, throttle: codalThrottleStatus() });
+        return reply.send({ ok: true, quarterlyCount, cacheBusted, throttle: codalThrottleStatus() });
       } catch (e) {
         rej(e);
         return fail(reply, e);
@@ -734,8 +819,9 @@ export function registerIngestRoutes(server: FastifyInstance): void {
       }
       try {
         await runRankingsOnly(server.db);
+        const cacheBusted = await bustReadCaches(server);
         res({ ok: true as const, message: "Rankings updated" });
-        return reply.send({ ok: true, message: "Rankings updated", throttle: codalThrottleStatus() });
+        return reply.send({ ok: true, message: "Rankings updated", cacheBusted, throttle: codalThrottleStatus() });
       } catch (e) {
         rej(e);
         return fail(reply, e);
@@ -775,6 +861,8 @@ export function registerIngestRoutes(server: FastifyInstance): void {
               lettersFound: { type: "integer" },
               reportsParsed: { type: "integer" },
               rowsUpserted: { type: "integer" },
+              skippedKnown: { type: "integer" },
+              skippedOutOfRange: { type: "integer" },
               errors: { type: "array", items: { type: "string" } },
             },
           },

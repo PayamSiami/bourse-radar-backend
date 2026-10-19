@@ -85,7 +85,7 @@ export async function initializeJobs(server: FastifyInstance): Promise<void> {
       schedule: "0 14 * * 0-4",
       task: async () => {
         logger.info("[job] ingesting monthly sales from Codal.ir");
-        const n = await syncMonthlySales(server.db, symbols);
+        const n = await syncMonthlySales(server.db, symbols, undefined);
         logger.info(`[job] synced ${n} monthly sales records`);
       },
     },

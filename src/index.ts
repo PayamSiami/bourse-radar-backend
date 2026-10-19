@@ -39,9 +39,6 @@ async function buildServer() {
     logger: {
       level: config.app.logLevel,
     },
-    // /api/stocks == /api/stocks/
-    // Must live under routerOptions: the top-level `ignoreTrailingSlash` is
-    // deprecated (FSTDEP022) and removed in fastify@6.
     routerOptions: { ignoreTrailingSlash: true },
   });
 

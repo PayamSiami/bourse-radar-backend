@@ -8,12 +8,13 @@ import {
 } from "#scrapers/fx";
 import {
   fetchMonthlySales,
-  fetchQuarterlyFinancials,
+  fetchLatestQuarterlyFinancials,
   closeBrowser,
   searchLetters,
   filterMonthlySalesLetters,
   fetchReportHtml,
   extractMonthlySalesFull,
+  extractJalaliPeriodEnd,
   isCodalCoolingDown,
   codalThrottleStatus,
   codalCooldownRemainingMs,
@@ -23,132 +24,144 @@ import {
 
 // Re-exported so routes/services can report throttle state without reaching
 // into the scraper module directly.
-export {
-  isCodalCoolingDown,
-  codalThrottleStatus,
-  codalCooldownRemainingMs,
-};
+export { isCodalCoolingDown, codalThrottleStatus, codalCooldownRemainingMs };
 import { jalaliToGregorian, toIsoDate } from "#utils/jalali";
 
 type PostgresDb = ReturnType<typeof postgres>;
 
-export type WatchlistType = "general" | "bank" | "insurance" | "holding";
+export type WatchlistType =
+  | "general"
+  | "bank"
+  | "insurance"
+  | "holding";
 
-export const WATCHLIST: Array<{
+export type WatchlistItem = {
   sym: string;
   name: string;
   type: WatchlistType;
-}> = [
+};
+
+export const WATCHLIST: Array<WatchlistItem> = [
   // ── فلزات اساسی (Basic Metals) ──────────────────────
-  { sym: "فولاد", name: "فولاد مبارکه", type: "general" },
-  { sym: "فخوز", name: "فولاد خوزستان", type: "general" },
-  { sym: "فخاس", name: "فولاد خراسان", type: "general" },
-  { sym: "ذوب", name: "ذوبآهن اصفهان", type: "general" },
-  { sym: "فملی", name: "ملی صنایع مس ایران", type: "general" },
-  { sym: "فایرا", name: "آلومینیوم ایران", type: "general" },
-  { sym: "فمراد", name: "آلومراد", type: "general" },
-  { sym: "فپارس", name: "آلومینیوم پارس", type: "general" },
-  { sym: "فالوم", name: "آلومتک", type: "general" },
-  { sym: "فزرین", name: "معدن زرین آسیا", type: "general" },
-  { sym: "فجر", name: "فولاد امیرکبیر کاشان", type: "general" },
-  { sym: "فاراک", name: "ماشینسازی اراک", type: "general" },
-  { sym: "فوکا", name: "فولاد کاویان", type: "general" },
-  { sym: "فسرب", name: "ملی سرب و روی", type: "general" },
-  { sym: "فسبزوار", name: "پارس فولاد سبزوار", type: "general" },
-  { sym: "فاسمین", name: "کالسیمین", type: "general" },
-  { sym: "کروی", name: "توسعه معادن روی ایران", type: "general" },
-  { sym: "کگل", name: "گلگهر", type: "general" },
-  { sym: "کچاد", name: "چادرملو", type: "general" },
+  // { sym: "فولاد",  name: "فولاد مبارکه",            type: "general" },
+  // { sym: "فخوز",   name: "فولاد خوزستان",           type: "general" },
+  // { sym: "فخاس",   name: "فولاد خراسان",            type: "general" },
+  // { sym: "ذوب",    name: "ذوب‌آهن اصفهان",          type: "general" },
+  // { sym: "فملی",   name: "ملی صنایع مس ایران",      type: "general" },
+  // { sym: "فایرا",  name: "آلومینیوم ایران",          type: "general" },
+  // { sym: "فمراد",  name: "آلومراد",                 type: "general" },
+  // { sym: "فپارس",  name: "آلومینیوم پارس",          type: "general" },
+  // { sym: "فالوم",  name: "آلومتک",                  type: "general" },
+  // { sym: "فزرین",  name: "معدن زرین آسیا",          type: "general" },
+  // { sym: "فجر",    name: "فولاد امیرکبیر کاشان",    type: "general" },
+  // { sym: "فاراک",  name: "ماشین‌سازی اراک",          type: "general" },
+  // { sym: "فوکا",   name: "فولاد کاویان",            type: "general" },
+  // { sym: "فسرب",   name: "ملی سرب و روی",           type: "general" },
+  { sym: "فسبزوار", name: "پارس فولاد سبزوار",        type: "general" },
+  // { sym: "فاسمین", name: "کالسیمین",                type: "general" },
+  // { sym: "کروی",   name: "توسعه معادن روی ایران",   type: "general" },
+  // { sym: "کگل",    name: "گل‌گهر",                  type: "general" },
+  // { sym: "کچاد",   name: "چادرملو",                 type: "general" },
+
+  // ── زراعت و دام (Agriculture & Livestock) ──────────
+  { sym: "زشگزا",  name: "شیر و گوشت زاگرس شهرکرد",   type: "general" },
 
   // ── پالایش و پتروشیمی (Refining & Petrochemical) ────
-  { sym: "شپنا", name: "پالایش نفت اصفهان", type: "general" },
-  { sym: "شبندر", name: "پالایش نفت بندرعباس", type: "general" },
-  { sym: "شتران", name: "پالایش نفت تهران", type: "general" },
-  { sym: "شبریز", name: "پالایش نفت تبریز", type: "general" },
-  { sym: "شپدیس", name: "پتروشیمی پردیس", type: "general" },
-  { sym: "شیراز", name: "پتروشیمی شیراز", type: "general" },
-  { sym: "شاراک", name: "پتروشیمی شازند", type: "general" },
-  { sym: "شپارس", name: "بینالمللی محصولات پارس", type: "general" },
-  { sym: "شپاکسا", name: "پاکسان", type: "general" },
-  { sym: "شخارک", name: "پتروشیمی خارک", type: "general" },
-  { sym: "تاپیکو", name: "سرمایهگذاری نفت و گاز تامین", type: "general" },
+  // { sym: "شپنا",    name: "پالایش نفت اصفهان",            type: "general" },
+  // { sym: "شبندر",   name: "پالایش نفت بندرعباس",          type: "general" },
+  // { sym: "شتران",   name: "پالایش نفت تهران",             type: "general" },
+  // { sym: "شبریز",   name: "پالایش نفت تبریز",             type: "general" },
+  // { sym: "شپدیس",   name: "پتروشیمی پردیس",               type: "general" },
+  // { sym: "شیراز",   name: "پتروشیمی شیراز",               type: "general" },
+  // { sym: "شاراک",   name: "پتروشیمی شازند",               type: "general" },
+  // { sym: "شپارس",   name: "بین‌المللی محصولات پارس",       type: "general" },
+  // { sym: "شپاکسا",  name: "پاکسان",                       type: "general" },
+  // { sym: "شخارک",   name: "پتروشیمی خارک",                type: "general" },
+  // { sym: "تاپیکو",  name: "سرمایه‌گذاری نفت و گاز تامین",  type: "general" },
 
-  // // ── شیمیایی (Chemicals) ─────────────────────────────
-  { sym: "شکام", name: "صنایع شیمیایی کیمیاگران امروز", type: "general" },
-  { sym: "شسینا", name: "صنایع شیمیایی سینا", type: "general" },
-  { sym: "شبصیر", name: "پتروشیمی قائد بصیر", type: "general" },
-  { sym: "شغدیر", name: "پتروشیمی غدیر", type: "general" },
-  { sym: "شجم", name: "صنایع پتروشیمی تخت جمشید", type: "general" },
-  { sym: "شفن", name: "پتروشیمی فنآوران", type: "general" },
+  // ── شیمیایی (Chemicals) ─────────────────────────────
+  // { sym: "شکام",   name: "صنایع شیمیایی کیمیاگران امروز", type: "general" },
+  // { sym: "شسینا",  name: "صنایع شیمیایی سینا",            type: "general" },
+  // { sym: "شبصیر",  name: "پتروشیمی قائد بصیر",            type: "general" },
+  // { sym: "شغدیر",  name: "پتروشیمی غدیر",                 type: "general" },
+  // { sym: "شجم",    name: "صنایع پتروشیمی تخت جمشید",      type: "general" },
+  // { sym: "شفن",    name: "پتروشیمی فن‌آوران",             type: "general" },
 
-  // // // ── خودرو (Automotive) ──────────────────────────────
-  { sym: "خودرو", name: "ایران خودرو", type: "general" },
-  { sym: "خساپا", name: "سایپا", type: "general" },
-  { sym: "خپارس", name: "پارس خودرو", type: "general" },
-  { sym: "پتایر", name: "ایران تایر", type: "general" },
-  { sym: "پاسا", name: "ایران یاسا تایر", type: "general" },
+  // ── خودرو (Automotive) ──────────────────────────────
+  // { sym: "خودرو",  name: "ایران خودرو",        type: "general" },
+  // { sym: "خساپا",  name: "سایپا",              type: "general" },
+  // { sym: "خپارس",  name: "پارس خودرو",         type: "general" },
+  // { sym: "پتایر",  name: "ایران تایر",         type: "general" },
+  // { sym: "پاسا",   name: "ایران یاسا تایر",    type: "general" },
 
-  // // // ── دارویی (Pharmaceuticals) ────────────────────────
-  { sym: "برکت", name: "گروه دارویی برکت", type: "general" },
-  { sym: "دتولید", name: "داروسازی تولید دارو", type: "general" },
-  { sym: "دسبحا", name: "گروه دارویی سبحان", type: "general" },
-  { sym: "دلقما", name: "دارویی لقمان", type: "general" },
-  { sym: "دعبید", name: "لابراتوار داروسازی دکتر عبیدی", type: "general" },
-  { sym: "دپارس", name: "پارس دارو", type: "general" },
-  { sym: "دیران", name: "ایران دارو", type: "general" },
-  { sym: "دالبر", name: "البرز دارو", type: "general" },
+  // ── دارویی (Pharmaceuticals) ────────────────────────
+  // { sym: "برکت",   name: "گروه دارویی برکت",                 type: "general" },
+  // { sym: "دتولید", name: "داروسازی تولید دارو",              type: "general" },
+  // { sym: "دسبحا",  name: "گروه دارویی سبحان",                type: "general" },
+  // { sym: "دلقما",  name: "دارویی لقمان",                     type: "general" },
+  // { sym: "دعبید",  name: "لابراتوار داروسازی دکتر عبیدی",    type: "general" },
+  // { sym: "دپارس",  name: "پارس دارو",                        type: "general" },
+  // { sym: "دیران",  name: "ایران دارو",                       type: "general" },
+  // { sym: "دالبر",  name: "البرز دارو",                       type: "general" },
 
-  // // // ── غذایی (Food) ────────────────────────────────────
-  { sym: "غپونه", name: "نوش پونه مشهد", type: "general" },
-  { sym: "غشهد", name: "شهد ایران", type: "general" },
-  { sym: "غچین", name: "کشت و صنعت چین چین", type: "general" },
-  { sym: "غگرجی", name: "بیسکویت گرجی", type: "general" },
-  { sym: "غبهنوش", name: "بهنوش ایران", type: "general" },
+  // ── غذایی (Food) ────────────────────────────────────
+  // { sym: "غپونه",  name: "نوش پونه مشهد",           type: "general" },
+  // { sym: "غشهد",   name: "شهد ایران",               type: "general" },
+  // { sym: "غچین",   name: "کشت و صنعت چین چین",      type: "general" },
+  // { sym: "غگرجی",  name: "بیسکویت گرجی",            type: "general" },
+  // { sym: "غبهنوش", name: "بهنوش ایران",             type: "general" },
 
-  // // // ── سیمان (Cement) ──────────────────────────────────
-  { sym: "ستران", name: "سیمان تهران", type: "general" },
-  { sym: "سفارس", name: "سیمان فارس و خوزستان", type: "general" },
-  { sym: "سبزوا", name: "سیمان لار سبزوار", type: "general" },
+  // ── سیمان (Cement) ──────────────────────────────────
+  // { sym: "ستران",  name: "سیمان تهران",             type: "general" },
+  // { sym: "سفارس",  name: "سیمان فارس و خوزستان",    type: "general" },
+  // { sym: "سبزوا",  name: "سیمان لار سبزوار",        type: "general" },
 
-  // // // ── صنعتی و سایر (Industrial & Others) ──────────────
-  { sym: "کپشیر", name: "پشم شیشه ایران", type: "general" },
-  { sym: "تپمپی", name: "پمپسازی ایران", type: "general" },
-  { sym: "پلاسک", name: "پلاسکوکار", type: "general" },
-  { sym: "کسرام", name: "پارس سرام", type: "general" },
-  { sym: "کچینی", name: "کارخانه چینی ایران", type: "general" },
-  { sym: "لپارس", name: "پارس الکتریک", type: "general" },
-  { sym: "حکشتی", name: "کشتیرانی", type: "general" },
-  { sym: "تمحرکه", name: "ماشینسازی نیرومحرکه", type: "general" },
+  // ── صنعتی و سایر (Industrial & Others) ──────────────
+  // { sym: "کپشیر",  name: "پشم شیشه ایران",           type: "general" },
+  // { sym: "تپمپی",  name: "پمپ‌سازی ایران",           type: "general" },
+  // { sym: "پلاسک",  name: "پلاسکوکار",                type: "general" },
+  // { sym: "کسرام",  name: "پارس سرام",                type: "general" },
+  // { sym: "کچینی",  name: "کارخانه چینی ایران",       type: "general" },
+  // { sym: "لپارس",  name: "پارس الکتریک",             type: "general" },
+  // { sym: "حکشتی",  name: "کشتیرانی",                 type: "general" },
+  // { sym: "تمحرکه", name: "ماشین‌سازی نیرومحرکه",     type: "general" },
 
-  // // ── بانکها (Banks) ─────────────────────────────────
-  { sym: "وبملت", name: "بانک ملت", type: "bank" },
-  { sym: "وبصادر", name: "بانک صادرات", type: "bank" },
-  { sym: "وپاسار", name: "بانک پاسارگاد", type: "bank" },
-  { sym: "وتجارت", name: "بانک تجارت", type: "bank" },
-  { sym: "وبفارس", name: "بانک پارسیان", type: "bank" },
-  { sym: "وکار", name: "بانک کارآفرین", type: "bank" },
-  { sym: "ونوین", name: "بانک اقتصاد نوین", type: "bank" },
-  { sym: "وخاور", name: "بانک خاورمیانه", type: "bank" },
-  { sym: "وسینا", name: "بانک سینا", type: "bank" },
-  { sym: "وپست", name: "پست بانک", type: "bank" },
+  // ── بانک‌ها (Banks) ─────────────────────────────────
+  // { sym: "وبملت",  name: "بانک ملت",        type: "bank" },
+  // { sym: "وبصادر", name: "بانک صادرات",     type: "bank" },
+  // { sym: "وپاسار", name: "بانک پاسارگاد",   type: "bank" },
+  // { sym: "وتجارت", name: "بانک تجارت",      type: "bank" },
+  // { sym: "وبفارس", name: "بانک پارسیان",    type: "bank" },
+  // { sym: "وکار",   name: "بانک کارآفرین",   type: "bank" },
+  // { sym: "ونوین",  name: "بانک اقتصاد نوین", type: "bank" },
+  // { sym: "وخاور",  name: "بانک خاورمیانه",  type: "bank" },
+  // { sym: "وسینا",  name: "بانک سینا",       type: "bank" },
+  // { sym: "وپست",   name: "پست بانک",        type: "bank" },
 
-  // // ── بیمه (Insurance) ────────────────────────────────
-  { sym: "وبیمه", name: "بیمه ایران", type: "insurance" },
-  { sym: "وپارسیان", name: "بیمه پارسیان", type: "insurance" },
-  { sym: "ودی", name: "بیمه دی", type: "insurance" },
-  { sym: "ونیکی", name: "بیمه نیکان", type: "insurance" },
-  { sym: "آسیا", name: "بیمه آسیا", type: "insurance" },
-  { sym: "البرز", name: "بیمه البرز", type: "insurance" },
-  { sym: "دانا", name: "بیمه دانا", type: "insurance" },
+  // ── بیمه (Insurance) ────────────────────────────────
+  // { sym: "وبیمه",   name: "بیمه ایران",     type: "insurance" },
+  // { sym: "وپارسیان", name: "بیمه پارسیان",  type: "insurance" },
+  // { sym: "ودی",     name: "بیمه دی",        type: "insurance" },
+  // { sym: "ونیکی",   name: "بیمه نیکان",     type: "insurance" },
+  // { sym: "آسیا",    name: "بیمه آسیا",      type: "insurance" },
+  // { sym: "البرز",   name: "بیمه البرز",     type: "insurance" },
+  // { sym: "دانا",    name: "بیمه دانا",      type: "insurance" },
 
-  // // ── هلدینگها (Holdings) ────────────────────────────
-  { sym: "پارسان", name: "گسترش نفت و گاز پارسیان", type: "holding" },
-  { sym: "شستا", name: "سرمایهگذاری تأمین اجتماعی", type: "holding" },
-  { sym: "خگستر", name: "گسترش سرمایهگذاری ایرانخودرو", type: "holding" },
-  { sym: "وغدیر", name: "سرمایهگذاری غدیر", type: "holding" },
-  { sym: "وامید", name: "سرمایهگذاری امید", type: "holding" },
-  { sym: "وصندوق", name: "سرمایهگذاری صندوق بازنشستگی", type: "holding" },
+  // ── هلدینگ‌ها (Holdings) ────────────────────────────
+  // { sym: "پارسان",  name: "گسترش نفت و گاز پارسیان",          type: "holding" },
+  // { sym: "شستا",    name: "سرمایه‌گذاری تأمین اجتماعی",       type: "holding" },
+  // { sym: "خگستر",   name: "گسترش سرمایه‌گذاری ایران‌خودرو",   type: "holding" },
+  // { sym: "وغدیر",   name: "سرمایه‌گذاری غدیر",                type: "holding" },
+  // { sym: "وامید",   name: "سرمایه‌گذاری امید",                type: "holding" },
+  // { sym: "وصندوق",  name: "سرمایه‌گذاری صندوق بازنشستگی",     type: "holding" },
 ];
+
+/** چک سریع عضویت نماد در واچ‌لیست */
+const WATCHLIST_SYMBOLS = new Set(WATCHLIST.map((w) => w.sym));
+
+export function isInWatchlist(sym: string): boolean {
+  return WATCHLIST_SYMBOLS.has(sym);
+}
 
 const WATCHLIST_BY_SYM = new Map(WATCHLIST.map((w) => [w.sym, w]));
 
@@ -406,8 +419,13 @@ export interface MonthlySalesSyncOptions {
 export async function syncMonthlySales(
   sql: PostgresDb,
   symbols: string[],
+  maxMonthEnd?: Date,
   opts: MonthlySalesSyncOptions = {},
 ): Promise<number> {
+  if (maxMonthEnd) {
+    await sql`DELETE FROM monthly_sales WHERE month_end > ${maxMonthEnd}`;
+  }
+
   const maxMonths = opts.maxMonths ?? MONTHLY_SALES_DEPTH;
   // Re-running ingest used to re-scrape (and re-upsert) months we already
   // have, which looks like "duplicate data". Skip anything already in the DB
@@ -464,11 +482,13 @@ export async function syncMonthlySales(
         WHERE symbol = ${symbol}
           AND fetched_at > NOW() - (${skipKnownDays} || ' days')::interval
       `;
-      const known = new Set(knownRows.map((r) =>
-        r.month_end instanceof Date
-          ? r.month_end.toISOString().slice(0, 10)
-          : String(r.month_end).slice(0, 10),
-      ));
+      const known = new Set(
+        knownRows.map((r) =>
+          r.month_end instanceof Date
+            ? r.month_end.toISOString().slice(0, 10)
+            : String(r.month_end).slice(0, 10),
+        ),
+      );
 
       const fx = await resolveFxContext(sql);
 
@@ -499,7 +519,9 @@ export async function syncMonthlySales(
       }
       console.log(
         `  [${symbol}] ✓ ${written} monthly sales records` +
-          (sales.length - written ? ` (${sales.length - written} already in DB, skipped)` : ""),
+          (sales.length - written
+            ? ` (${sales.length - written} already in DB, skipped)`
+            : ""),
       );
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -524,7 +546,7 @@ export async function syncLatestMonthlySales(
   sql: PostgresDb,
   symbols: string[],
 ): Promise<number> {
-  return syncMonthlySales(sql, symbols, { maxMonths: 1 });
+  return syncMonthlySales(sql, symbols, undefined, { maxMonths: 1 });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -634,13 +656,17 @@ export function toDiscreteQuarters(f: {
 export async function syncQuarterlyFinancials(
   sql: PostgresDb,
   symbols: string[],
+  minYear?: number,
+  maxYear?: number,
 ): Promise<number> {
   let count = 0;
 
   await mapWithConcurrency(symbols, 2, async (symbol) => {
     if (isCodalCoolingDown()) return;
     try {
-      const q = await withRetry(() => fetchQuarterlyFinancials(symbol));
+      const q = await withRetry(() =>
+        fetchLatestQuarterlyFinancials(symbol, maxYear),
+      );
       if (!q) return;
 
       const f = q.financials;
@@ -701,77 +727,127 @@ export async function syncQuarterlyFinancials(
 
   return count;
 }
-
-// ═══════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────────────
 // Phase 4: Forward P/E
-// ═══════════════════════════════════════════════════════════════
-
+// ─────────────────────────────────────────────────────────────────────────
 export async function recomputeForwardPe(sql: PostgresDb): Promise<number> {
-  // Basis: last 3 calendar months of sales (≈ one quarter), annualised × 4,
-  // combined with the most recent reported quarterly net margin.
   const rows = await sql`
-    WITH sales AS (
-      SELECT symbol, sales_amount, month_end,
-             ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY month_end DESC) AS rn
-      FROM monthly_sales
-    ),
-    last3 AS (
+    WITH monthly_base AS (
       SELECT
         symbol,
-        SUM(sales_amount) AS sum_sales,
-        AVG(sales_amount) AS avg_sales,
-        COUNT(*)::int AS month_count
-      FROM sales
+        month_end,
+        ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY month_end DESC) AS rn,
+
+        -- فروش ماهانه (چند لایه fallback)
+        COALESCE(
+          NULLIF(sales_amount, 0),
+          NULLIF((detail->>'monthlySalesTotal')::numeric, 0),
+          NULLIF((detail->>'domesticMonthly')::numeric, 0) +
+            COALESCE(NULLIF((detail->>'exportMonthly')::numeric, 0), 0),
+          0
+        ) AS revenue,
+
+        -- service / بهای تمام‌شده (خواندن مقاوم از چند مسیر)
+        COALESCE(
+          -- ۱) serviceMonthly در سطح بالا (اگر منفی و غیرصفر باشد)
+          NULLIF((detail->>'serviceMonthly')::numeric, 0),
+          -- ۲) ردیف rowCode=11 در totals
+          (
+            SELECT (t->>'valuePeriod')::numeric
+            FROM jsonb_array_elements(COALESCE(detail->'totals', '[]'::jsonb)) AS t
+            WHERE (t->>'rowCode')::int = 11
+            LIMIT 1
+          ),
+          -- ۳) اگر gross_profit در detail باشد، service = gross_profit - revenue
+          NULLIF((detail->>'grossProfitMonthly')::numeric, 0)
+            - NULLIF((detail->>'monthlySalesTotal')::numeric, 0),
+          0
+        ) AS service
+      FROM monthly_sales
+    ),
+
+    revenue_last3 AS (
+      SELECT
+        symbol,
+        SUM(revenue) AS sum_sales,
+        AVG(NULLIF(revenue, 0)) AS avg_sales,
+        SUM(revenue + service) AS sum_gross,   -- service معمولاً منفی است
+        COUNT(*) FILTER (WHERE revenue > 0) AS month_count,
+        -- آیا حداقل یک ماه service غیرصفر داریم؟
+        COUNT(*) FILTER (WHERE service <> 0) AS month_count_with_service
+      FROM monthly_base
       WHERE rn <= 3
       GROUP BY symbol
     ),
-    -- Trailing 12-month baseline. Kept alongside the last-3-month basis so the
-    -- spread between "recent run-rate" and "trailing year" stays visible: when
-    -- the two diverge sharply, the cheaper P/E is an extrapolation, not a fact.
-    last12 AS (
+
+    revenue_last12 AS (
       SELECT
         symbol,
-        SUM(sales_amount) AS sum_sales_12m,
-        AVG(sales_amount) AS avg_sales_12m,
-        COUNT(*)::int AS month_count_12m
-      FROM sales
+        SUM(revenue) AS sum_sales_12m,
+        AVG(NULLIF(revenue, 0)) AS avg_sales_12m,
+        COUNT(*) FILTER (WHERE revenue > 0) AS month_count_12m
+      FROM monthly_base
       WHERE rn <= 12
       GROUP BY symbol
     ),
-    recent_price AS (
-      SELECT DISTINCT ON (symbol) symbol, last_price
-      FROM prices ORDER BY symbol, timestamp DESC
-    ),
-    -- Most recent reported quarterly margin (positive only, last 365 days)
-    latest_quarterly AS (
+
+    margin_from_quarterly AS (
       SELECT DISTINCT ON (symbol)
-        symbol, net_margin, quarter
+        symbol,
+        net_margin,
+        quarter,
+        period_end
       FROM quarterly_financials
       WHERE period_end > NOW() - INTERVAL '365 days'
-        AND net_margin IS NOT NULL AND net_margin > 0
+        AND net_margin IS NOT NULL
+        AND net_margin > 0
+        AND net_margin < 1          -- حاشیه بالای ۱۰۰٪ غیرمعتبر
       ORDER BY symbol, period_end DESC
+    ),
+
+    margin_from_monthly AS (
+      SELECT
+        symbol,
+        CASE
+          WHEN sum_sales > 0 AND month_count_with_service > 0
+            THEN sum_gross / sum_sales
+          ELSE NULL
+        END AS margin
+      FROM revenue_last3
+    ),
+
+    recent_price AS (
+      SELECT DISTINCT ON (symbol) symbol, last_price
+      FROM prices
+      ORDER BY symbol, timestamp DESC
     )
+
     SELECT
       sp.symbol,
+      sp.sector,
       sp2.last_price,
       sp.shares_outstanding,
       sp.is_bank,
       sp.is_insurance,
       sp.is_holding_company,
-      l3.sum_sales,
-      l3.avg_sales,
-      COALESCE(l3.month_count, 0) AS month_count,
-      l12.sum_sales_12m,
-      l12.avg_sales_12m,
-      COALESCE(l12.month_count_12m, 0) AS month_count_12m,
+      r3.sum_sales,
+      r3.avg_sales,
+      r3.month_count::int,
+      r3.month_count_with_service::int,
+      r12.sum_sales_12m,
+      r12.avg_sales_12m,
+      r12.month_count_12m::int,
       lq.net_margin AS quarterly_margin,
-      lq.quarter AS quarterly_quarter,
+      lq.quarter,
+      lq2.margin AS monthly_gross_margin,
+      lq2.margin IS NOT NULL AS margin_from_monthly,
       (lq.net_margin IS NOT NULL) AS margin_from_quarterly
     FROM stocks sp
-     JOIN recent_price sp2 ON sp2.symbol = sp.symbol
-     LEFT JOIN last3 l3 ON l3.symbol = sp.symbol
-     LEFT JOIN last12 l12 ON l12.symbol = sp.symbol
-     LEFT JOIN latest_quarterly lq ON lq.symbol = sp.symbol
+    JOIN recent_price sp2 ON sp2.symbol = sp.symbol
+    LEFT JOIN revenue_last3 r3 ON r3.symbol = sp.symbol
+    LEFT JOIN revenue_last12 r12 ON r12.symbol = sp.symbol
+    LEFT JOIN margin_from_quarterly lq ON lq.symbol = sp.symbol
+    LEFT JOIN margin_from_monthly lq2 ON lq2.symbol = sp.symbol
   `;
 
   let count = 0;
@@ -782,67 +858,101 @@ export async function recomputeForwardPe(sql: PostgresDb): Promise<number> {
     const sumSales = Number(r.sum_sales ?? 0);
     const avgSales = Number(r.avg_sales ?? 0);
     const monthCount = Number(r.month_count ?? 0);
-
+    const monthCountWithService = Number(r.month_count_with_service ?? 0);
     const sumSales12 = Number(r.sum_sales_12m ?? 0);
     const avgSales12 = Number(r.avg_sales_12m ?? 0);
     const monthCount12 = Number(r.month_count_12m ?? 0);
     const isBank = Boolean(r.is_bank);
     const isInsurance = Boolean(r.is_insurance);
     const isHolding = Boolean(r.is_holding_company);
-    const isFinancial = isBank || isInsurance || isHolding;
+    const sector = String(r.sector ?? "");
 
     const quarterlyMargin =
-      r.quarterly_margin != null ? Number(r.quarterly_margin) : null;
-    const marginFromQuarterly = Boolean(r.margin_from_quarterly);
+      r.quarterly_margin == null ? null : Number(r.quarterly_margin);
 
-    // Last 3 months of sales → annualised. SUM when we have a full quarter,
-    // otherwise AVG × 3 so a partial quarter does not understate run-rate.
+    const monthlyGrossMargin =
+      r.monthly_gross_margin == null ? null : Number(r.monthly_gross_margin);
+
     const hasFullQuarter = monthCount >= 3;
     const quarterlySales = hasFullQuarter ? sumSales : avgSales * 3;
     const yearlySales = quarterlySales * 4;
 
-    // Trailing 12-month baseline, same margin. This is the conservative
-    // counterpart: it never assumes the recent run-rate persists, so the gap
-    // between the two is the size of the extrapolation being made.
     const hasFullYear = monthCount12 >= 12;
     const yearlySales12 = hasFullYear ? sumSales12 : avgSales12 * 12;
 
-    // Sector fallback margins are only defensible for financials, whose
-    // business model genuinely differs from industrials. For non-financial
-    // issuers an unsourced default produces confidently-wrong P/E, so we
-    // decline to publish rather than guess.
-    const sectorDefault = isBank
-      ? 0.15
-      : isInsurance
-        ? 0.08
-        : isHolding
-          ? 0.05
-          : null;
+    if (r.symbol === "زشگزا") {
+      console.log("=== DEBUG زشگزا ===");
+      console.log("sumSales:", sumSales);
+      console.log("monthCount:", monthCount);
+      console.log("monthCountWithService:", monthCountWithService);
+      console.log("monthlyGrossMargin:", monthlyGrossMargin);
+      console.log("quarterlyMargin:", quarterlyMargin);
+      console.log("quarter label (r.quarter):", r.quarter);
+    }
 
-    let margin: number;
-    let marginSource: string;
+    // ---------- پیش‌فرض بخشی (sector default) ----------
+    // حاشیه سود محافظه‌کارانه بر اساس صنعت
+    let sectorDefault: number | null = null;
+    if (isBank) sectorDefault = 0.15;
+    else if (isInsurance) sectorDefault = 0.08;
+    else if (isHolding) sectorDefault = 0.05;
+    else if (sector.includes("زراعت") || sector.includes("کشاورزی"))
+      sectorDefault = 0.06; // زراعت و خدمات وابسته
+    else if (sector.includes("غذایی")) sectorDefault = 0.07;
+    else if (sector.includes("دارو")) sectorDefault = 0.10;
+    else if (sector.includes("فلز") || sector.includes("معدن"))
+      sectorDefault = 0.12;
+    else if (sector.includes("پتروشیمی") || sector.includes("شیمیایی"))
+      sectorDefault = 0.14;
+    else if (sector.includes("سیمان")) sectorDefault = 0.10;
+    else if (sector.includes("خودرو")) sectorDefault = 0.05;
+    else if (sector.includes("ساختمان")) sectorDefault = 0.06;
+
+    let margin = 0;
+    let marginSource = "بدون حاشیه سود معتبر — P/E محاسبه نشد";
     let marginIsAssumed = false;
-    if (quarterlyMargin != null && quarterlyMargin > 0) {
+    let marginIsApproximate = false;
+
+    // ---------- انتخاب حاشیه ----------
+    // ۱) حاشیه سود خالص از گزارش فصلی (معتبرترین)
+    if (quarterlyMargin != null && quarterlyMargin > 0 && quarterlyMargin < 1) {
       const qLabel =
-        r.quarterly_quarter === 3
+        Number(r.quarter) === 3
           ? "۹ ماهه"
-          : r.quarterly_quarter === 4
+          : Number(r.quarter) === 4
             ? "۱۲ ماهه"
-            : r.quarterly_quarter === 2
+            : Number(r.quarter) === 2
               ? "۶ ماهه"
               : "۳ ماهه";
       margin = quarterlyMargin;
       marginSource = `حاشیه سود آخرین فصل (${qLabel}) (${(margin * 100).toFixed(1)}٪)`;
-    } else if (sectorDefault != null) {
+    }
+    // ۲) حاشیه سود ناخالص از گزارش ماهانه — فقط اگر service واقعاً موجود باشد
+    else if (
+      monthlyGrossMargin != null &&
+      monthlyGrossMargin > 0 &&
+      monthlyGrossMargin < 0.85 &&
+      monthCountWithService > 0
+    ) {
+      margin = monthlyGrossMargin;
+      marginSource = `حاشیه سود ناخالص از گزارش فعالیت ماهانه (${(margin * 100).toFixed(1)}٪) ⚠️ برآورد`;
+      marginIsApproximate = true;
+    }
+    // ۳) پیش‌فرض بخشی
+    else if (sectorDefault != null) {
       margin = sectorDefault;
       marginIsAssumed = true;
-      marginSource = `حاشیه سود پیش‌فرض ${isBank ? "بانکی" : isInsurance ? "بیمه‌ای" : "هلدینگی"} (${(margin * 100).toFixed(1)}٪) ⚠️ برآورد`;
-    } else {
-      // No margin evidence at all → leave P/E unpublished rather than invent one.
-      margin = 0;
-      marginSource = "بدون حاشیه سود معتبر — P/E محاسبه نشد";
+      const sectorLabel = isBank
+        ? "بانکی"
+        : isInsurance
+          ? "بیمه‌ای"
+          : isHolding
+            ? "هلدینگی"
+            : sector || "بخشی";
+      marginSource = `حاشیه سود پیش‌فرض ${sectorLabel} (${(margin * 100).toFixed(1)}٪) ⚠️ برآورد`;
     }
 
+    // ---------- محاسبه P/E ----------
     let eps: number | null = null;
     let pe: number | null = null;
     let pe12: number | null = null;
@@ -851,141 +961,109 @@ export async function recomputeForwardPe(sql: PostgresDb): Promise<number> {
     let confidenceScore = 0;
     let disclaimer = "";
 
-    if (isFinancial && !marginFromQuarterly) {
-      disclaimer =
-        "برای بانک/بیمه/هلدینگ، محاسبه P/E Forward نیازمند صورت مالی فصلی است.";
-    } else if (
-      price > 0 &&
-      shares > 0 &&
-      quarterlySales > 0 &&
-      margin > 0 &&
-      !marginIsAssumed
-    ) {
+    if (price > 0 && shares > 0 && quarterlySales > 0 && margin > 0) {
       const annualSales = yearlySales * 1_000_000;
       eps = (annualSales * margin) / shares;
 
       if (eps > 0) {
         pe = price / eps;
 
-        if (monthCount >= 3) {
-          confidenceScore = 0.75;
-          confidence = "high";
-        } else if (monthCount === 2) {
-          confidenceScore = 0.5;
-          confidence = "medium";
-        } else {
-          confidenceScore = 0.3;
-          confidence = "low";
-        }
+        confidenceScore = monthCount >= 3 ? 0.75 : monthCount === 2 ? 0.5 : 0.3;
+        confidence =
+          confidenceScore >= 0.75
+            ? "high"
+            : confidenceScore >= 0.4
+              ? "medium"
+              : "low";
 
-        if (marginFromQuarterly) {
-          confidenceScore = Math.min(1.0, confidenceScore + 0.25);
-          if (confidenceScore >= 0.75) confidence = "high";
-          else if (confidenceScore >= 0.4) confidence = "medium";
-          else confidence = "low";
+        if (marginIsApproximate) {
+          confidenceScore = Math.max(0.25, confidenceScore - 0.25);
+        }
+        if (marginIsAssumed) {
+          confidenceScore = Math.max(0.20, confidenceScore - 0.35);
+        }
+        confidence =
+          confidenceScore >= 0.75
+            ? "high"
+            : confidenceScore >= 0.4
+              ? "medium"
+              : "low";
+
+        if (shares > 0 && yearlySales12 > 0) {
+          eps12 = (yearlySales12 * 1_000_000 * margin) / shares;
+          if (eps12 > 0) pe12 = price / eps12;
         }
 
         const salesNote = hasFullQuarter
           ? `فروش ${monthCount} ماه اخیر (${Math.round(quarterlySales).toLocaleString()} میلیون ریال × ۴)`
           : `فروش ${monthCount} ماه اخیر (میانگین × ۳ × ۴)`;
 
-        // Baseline P/E on the trailing 12 months. If the two bases disagree
-        // sharply the "cheap" P/E is mostly extrapolation, so say so and
-        // reduce confidence rather than presenting it as a solid number.
-        if (shares > 0 && yearlySales12 > 0) {
-          eps12 = (yearlySales12 * 1_000_000 * margin) / shares;
-          if (eps12 > 0) pe12 = price / eps12;
-        }
-
-        const divergence =
-          pe12 != null && pe12 > 0 && pe > 0
-            ? Math.abs(pe - pe12) / pe12
-            : null;
-
         let basisNote = "";
-        if (divergence != null) {
-          const cheaper = Math.min(pe, pe12!);
-          const pricier = Math.max(pe, pe12!);
-          basisNote =
-            ` مبنای ۱۲ ماه اخیر: P/E ≈ ${pe12!.toFixed(2)}. ` +
-            `فاصله دو مبنا ${(divergence * 100).toFixed(0)}٪ است` +
-            (pe < pe12!
-              ? ` — ارزان‌ترین عدد (${cheaper.toFixed(2)}) حاصل فرض تداوم فروش اخیر است.`
-              : ` — عدد بالاتر (${pricier.toFixed(2)}) بر مبنای ۱۲ ماه اخیر است.`);
-        }
-
-        // A wide gap between the two bases is genuine uncertainty.
-        if (divergence != null && divergence > 0.25) {
-          confidenceScore = Math.max(0.2, confidenceScore - 0.25);
-          confidence =
-            confidenceScore >= 0.75
-              ? "high"
-              : confidenceScore >= 0.4
-                ? "medium"
-                : "low";
-          basisNote +=
-            " ⚠️ عدم قطعیت بالا به دلیل اختلاف زیاد بین مبناهای محاسبه.";
+        if (pe12 != null && pe12 > 0) {
+          const divergence = Math.abs(pe - pe12) / pe12;
+          basisNote = ` مبنای ۱۲ ماه اخیر: P/E ≈ ${pe12.toFixed(2)}. فاصله دو مبنا ${(divergence * 100).toFixed(0)}٪ است.`;
         }
 
         disclaimer = `برآورد بر اساس ${salesNote} و ${marginSource}.${basisNote} ⚠️ این یک برآورد است، نه پیش‌بینی قیمت.`;
       }
-    } else if (marginIsAssumed) {
-      disclaimer = `حاشیه سود از میانگین صنعتی ${isBank ? "بانکی" : isInsurance ? "بیمه‌ای" : "هلدینگی"} برآورد شده (${(margin * 100).toFixed(1)}٪). برای دقت بیشتر به صورت مالی فصلی نیاز است.`;
-    } else if (!marginFromQuarterly) {
-      disclaimer =
-        "صورت مالی فصلی در دسترس نیست، بنابراین حاشیه سود معتبری برای محاسبه P/E Forward وجود ندارد. برای شرکت‌های غیرمالی از حاشیه پیش‌فرض استفاده نمی‌شود چون نتیجه گمراه‌کننده خواهد بود.";
     } else {
       disclaimer =
-        "داده‌های قیمت، سهام یا فروش ماهانه کافی موجود نیست. P/E Forward غیرقابل محاسبه.";
+        "داده‌های قیمت، سهام یا فروش ماهانه کافی موجود نیست یا حاشیه سود معتبر یافت نشد.";
     }
 
     const method =
       pe == null
         ? "unavailable"
-        : marginIsAssumed
-          ? "last3m_annualised_assumed_margin"
-          : hasFullQuarter
-            ? "last3m_annualised"
-            : "last3m_avg_annualised";
+        : marginIsApproximate
+          ? "last3m_anchored_gross_margin"
+          : marginIsAssumed
+            ? "last3m_annualised_assumed_margin"
+            : hasFullQuarter
+              ? "last3m_annualised"
+              : "last3m_avg_annualised";
 
     await sql`
-      INSERT INTO forward_pe (symbol, calculated_at, estimated_annual_eps, forward_pe,
-                              confidence, confidence_score, method, margin_used, disclaimer,
-                              calculation_json)
-      VALUES (${r.symbol}, NOW(), ${eps}, ${pe}, ${confidence}, ${confidenceScore},
-              ${method}, ${margin}, ${disclaimer},
-              ${JSON.stringify({
-                basis: "last_3_months_annualised_x4",
-                baseline_basis: "last_12_months_sum",
-                quarterlySales,
-                yearlySales,
-                hasFullQuarter,
-                monthCount,
-                yearlySales12,
-                hasFullYear,
-                monthCount12,
-                pe12,
-                eps12,
-                quarterlyMargin,
-                marginSource,
-              })}::jsonb)
+      INSERT INTO forward_pe (
+        symbol, calculated_at, estimated_annual_eps, forward_pe,
+        confidence, confidence_score, method, margin_used, disclaimer,
+        calculation_json
+      ) VALUES (
+        ${r.symbol}, NOW(), ${eps}, ${pe}, ${confidence}, ${confidenceScore},
+        ${method}, ${margin}, ${disclaimer},
+        ${JSON.stringify({
+          basis: "last_3_months_annualised_x4",
+          quarterlySales,
+          yearlySales,
+          hasFullQuarter,
+          monthCount,
+          monthCountWithService,
+          yearlySales12,
+          hasFullYear,
+          monthCount12,
+          pe12,
+          eps12,
+          quarterlyMargin,
+          monthlyGrossMarginRaw: monthlyGrossMargin,
+          sectorDefault,
+          marginSource,
+        })}::jsonb
+      )
     `;
 
+    // فقط آخرین محاسبه برای هر نماد نگه داشته شود
     await sql`
       DELETE FROM forward_pe
       WHERE ctid IN (
         SELECT ctid FROM (
-          SELECT ctid, ROW_NUMBER() OVER (
-            PARTITION BY symbol ORDER BY calculated_at DESC
-          ) AS rn
+          SELECT ctid,
+                 ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY calculated_at DESC) AS rn
           FROM forward_pe
-          WHERE symbol = ${r.symbol}
-        ) t
-        WHERE t.rn > 30
+        ) p
+        WHERE p.rn > 1
       )
     `;
 
-    count++;
+    count += margin > 0 && pe != null ? 1 : 0;
   }
 
   return count;
@@ -1170,14 +1248,25 @@ export interface ArchiveResult {
   lettersFound: number;
   reportsParsed: number;
   rowsUpserted: number;
+  /** Months already in the DB (within the 7-day dedup window) — not fetched. */
+  skippedKnown?: number;
+  /** Months outside the requested Jalali from/to window — not fetched. */
+  skippedOutOfRange?: number;
   errors: string[];
+}
+
+/** Parse a "YYYY/MM/DD" (or YYYY-MM-DD) Jalali string into an ISO date. */
+function parseJalaliBound(raw: string): string | null {
+  const m = raw.trim().match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+  if (!m) return null;
+  return toIsoDate(jalaliToGregorian(+m[1]!, +m[2]!, +m[3]!));
 }
 
 export async function ingestArchiveForSymbol(
   sql: PostgresDb,
   symbol: string,
-  _fromJalali: string,
-  _toJalali: string,
+  fromJalali: string,
+  toJalali: string,
 ): Promise<Omit<ArchiveResult, "symbol">> {
   const errors: string[] = [];
   const wl = WATCHLIST_BY_SYM.get(symbol);
@@ -1202,7 +1291,9 @@ export async function ingestArchiveForSymbol(
   const allLetters: CodalLetter[] = [];
   for (let page = 1; page <= 20; page++) {
     if (isCodalCoolingDown()) {
-      console.warn(`  [${symbol}] ⚠ stopping at page ${page} — ${codalThrottleStatus()}`);
+      console.warn(
+        `  [${symbol}] ⚠ stopping at page ${page} — ${codalThrottleStatus()}`,
+      );
       break;
     }
     const letters = await searchLetters(symbol, { PageNumber: String(page) });
@@ -1212,8 +1303,34 @@ export async function ingestArchiveForSymbol(
   }
   const monthly = filterMonthlySalesLetters(allLetters);
 
+  // Dedup: which month_ends do we already have (ingested within 7 days)?
+  // Without this, re-running an archive re-downloads ~100 report pages and
+  // re-upserts them — exact same complaint as Phase 2, and much worse for a
+  // backfill since reportsParsed never shrinks on retries.
+  const knownRows = await sql<{ month_end: Date | string }[]>`
+    SELECT month_end FROM monthly_sales
+    WHERE symbol = ${symbol}
+      AND fetched_at > NOW() - INTERVAL '7 days'
+  `;
+  const knownMonths = new Set(
+    knownRows.map((r) =>
+      r.month_end instanceof Date
+        ? r.month_end.toISOString().slice(0, 10)
+        : String(r.month_end).slice(0, 10),
+    ),
+  );
+
+  // `from`/`to` were previously ignored (params were literally `_fromJalali`),
+  // so every archive run backfilled the entire history — a 1405-only request
+  // still fetched ۱۴۰۱ and ۱۳۹۷ reports. Resolve the window once here and
+  // filter letters by their period end BEFORE downloading report HTML.
+  const fromIso = parseJalaliBound(fromJalali);
+  const toIso = parseJalaliBound(toJalali);
+  let skippedOutOfRange = 0;
+
   let reportsParsed = 0;
   let rowsUpserted = 0;
+  let skippedKnown = 0;
   const fx = await resolveFxContext(sql);
 
   for (const letter of monthly) {
@@ -1222,6 +1339,22 @@ export async function ingestArchiveForSymbol(
         `  [${symbol}] ⚠ stopping report fetch — ${codalThrottleStatus()}`,
       );
       break;
+    }
+    const period = extractJalaliPeriodEnd(letter.title);
+    if (period) {
+      const monthEnd = toIsoDate(
+        jalaliToGregorian(period.jy, period.jm, period.jd),
+      );
+      // Outside the requested Jalali window (or already in the DB within the
+      // 7-day dedup window) → never download this report.
+      if ((fromIso && monthEnd < fromIso) || (toIso && monthEnd > toIso)) {
+        skippedOutOfRange++;
+        continue;
+      }
+      if (knownMonths.has(monthEnd)) {
+        skippedKnown++;
+        continue;
+      }
     }
     try {
       const html = await fetchReportHtml(letter.url);
@@ -1262,10 +1395,23 @@ export async function ingestArchiveForSymbol(
     }
   }
 
+  if (skippedKnown) {
+    console.log(
+      `  [${symbol}] ↷ ${skippedKnown} month(s) already in DB — skipped (dedup)`,
+    );
+  }
+  if (skippedOutOfRange) {
+    console.log(
+      `  [${symbol}] ↷ ${skippedOutOfRange} month(s) outside ${fromJalali}–${toJalali} — skipped`,
+    );
+  }
+
   return {
     lettersFound: monthly.length,
     reportsParsed,
     rowsUpserted,
+    skippedKnown,
+    skippedOutOfRange,
     errors,
   };
 }
@@ -1288,8 +1434,12 @@ export async function ingestArchiveForSymbols(
 // ═══════════════════════════════════════════════════════════════
 // Full pipeline
 // ═══════════════════════════════════════════════════════════════
-
-export async function runFullIngest(sql: PostgresDb): Promise<{
+export async function runFullIngest(
+  sql: PostgresDb,
+  minYear?: number,
+  maxYear?: number,
+  maxMonthEnd?: Date,
+): Promise<{
   fx: number;
   stocks: number;
   prices: number;
@@ -1313,10 +1463,15 @@ export async function runFullIngest(sql: PostgresDb): Promise<{
     const syms = snapshots.map((s) => s.symbol);
 
     console.log("\n=== Phase 2: Codal monthly sales ===");
-    const salesCount = await syncMonthlySales(sql, syms);
+    const salesCount = await syncMonthlySales(sql, syms, maxMonthEnd);
 
     console.log("\n=== Phase 3: Codal quarterly financials ===");
-    const quarterlyCount = await syncQuarterlyFinancials(sql, syms);
+    const quarterlyCount = await syncQuarterlyFinancials(
+      sql,
+      syms,
+      minYear,
+      maxYear,
+    );
 
     console.log("\n=== Phase 4: Forward P/E ===");
     const peCount = await recomputeForwardPe(sql);
@@ -1343,7 +1498,9 @@ export async function runFullIngest(sql: PostgresDb): Promise<{
 // ═══════════════════════════════════════════════════════════════
 
 /** Phase 1: TSETMC symbols + prices → Batch 1b market-cap history. */
-export async function runPricesOnly(sql: PostgresDb): Promise<{ stocks: number; prices: number; mcap: number }> {
+export async function runPricesOnly(
+  sql: PostgresDb,
+): Promise<{ stocks: number; prices: number; mcap: number }> {
   console.log("\n=== Phase 1: TSETMC symbols + prices ===");
   const snapshots = await scrapeAllSymbols();
   const stocksCount = await upsertStocks(sql, snapshots);
@@ -1361,19 +1518,25 @@ export async function runMonthlySalesOnly(
   full = false,
 ): Promise<number> {
   const syms = WATCHLIST.map((w) => w.sym);
-  console.log(`\n=== Phase 2: Codal monthly sales (${full ? "full backfill" : "latest month only"}) ===`);
+  console.log(
+    `\n=== Phase 2: Codal monthly sales (${full ? "full backfill" : "latest month only"}) ===`,
+  );
   const count = full
-    ? await syncMonthlySales(sql, syms)
+    ? await syncMonthlySales(sql, syms, undefined)
     : await syncLatestMonthlySales(sql, syms);
   console.log(`  [sales] upserted ${count} monthly sales records`);
   return count;
 }
 
-/** Phase 3: Codal quarterly financials. */
-export async function runQuarterlyOnly(sql: PostgresDb): Promise<number> {
+/** Phase 3: Codal quarterly financials. Accepts year/warded */
+export async function runQuarterlyOnly(
+  sql: PostgresDb,
+  minYear?: number,
+  maxYear?: number,
+): Promise<number> {
   const syms = WATCHLIST.map((w) => w.sym);
   console.log("\n=== Phase 3: Codal quarterly financials ===");
-  const count = await syncQuarterlyFinancials(sql, syms);
+  const count = await syncQuarterlyFinancials(sql, syms, minYear, maxYear);
   console.log(`  [quarterly] upserted ${count} quarterly financial records`);
   return count;
 }

@@ -402,16 +402,20 @@ export async function registerStocksRoutes(
           : null,
         salesHistory: (salesRows || []).map((r: any) => {
           const d = parseJsonb<any>(r.detail);
+          // `Number(null)` is 0, which read as "no sales that month". These
+          // fields are absent (row 16 missing) for some Codal reports, and
+          // the honest value then is null, not 0.
+          const numField = (v: unknown) => (v == null ? null : Number(v));
           return {
             monthEnd: r.month_end,
             salesAmount: Number(r.sales_amount),
             isEstimated: !!r.is_estimated,
             sourceUrl: r.source_url,
             fetchedAt: r.fetched_at,
-            ytdSalesTotal: d ? Number(d.ytdSalesTotal ?? null) : null,
-            priorYtdSalesTotal: d ? Number(d.priorYtdSalesTotal ?? null) : null,
-            domesticMonthly: d ? Number(d.domesticMonthly ?? null) : null,
-            exportMonthly: d ? Number(d.exportMonthly ?? null) : null,
+            ytdSalesTotal: d ? numField(d.ytdSalesTotal) : null,
+            priorYtdSalesTotal: d ? numField(d.priorYtdSalesTotal) : null,
+            domesticMonthly: d ? numField(d.domesticMonthly) : null,
+            exportMonthly: d ? numField(d.exportMonthly) : null,
             productCount: d ? (Array.isArray(d.goods) ? d.goods.length : 0) : 0,
             detail: d,
           };

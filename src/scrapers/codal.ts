@@ -193,6 +193,19 @@ export function codalThrottleStatus(): string {
     : "ok";
 }
 
+/**
+ * Transient socket-level failures. These come back as raw Playwright/Node
+ * errors with NO HTTP status (status 0), so the throttling branches above
+ * never see them — without this check a single `read ECONNRESET` fails the
+ * whole letter permanently even though re-fetching it usually works.
+ */
+function isTransientNetworkError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return /ECONNRESET|EPIPE|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|ENETUNREACH|socket hang up|ERR_NETWORK|ERR_INTERNET_DISCONNECTED|net::ERR_(EMPTY_RESPONSE|CONNECTION_(RESET|CLOSED|REFUSED)|TIMED_OUT)|Timeout .*exceeded/i.test(
+    msg,
+  );
+}
+
 class RateLimiter {
   /** Tail of the serialization chain. */
   private chain: Promise<unknown> = Promise.resolve();
@@ -253,14 +266,24 @@ class RateLimiter {
       } catch (e) {
         const status = e instanceof CodalHttpError ? e.status : 0;
         const retryAfter = e instanceof CodalHttpError ? e.retryAfterMs : null;
-        const retryable = status === 429 || (status >= 500 && status < 600);
+        const isThrottle = status === 429 || (status >= 500 && status < 600);
+        const transient = !isThrottle && isTransientNetworkError(e);
+        const retryable = isThrottle || transient;
         if (!retryable) throw e;
 
-        noteThrottle(retryAfter);
+        // The breaker counts REAL throttles. A socket reset is the host
+        // hanging up mid-request, not a rate limit — counting it would open
+        // the breaker and silence us for 2 minutes for no reason.
+        if (isThrottle) {
+          noteThrottle(retryAfter);
+        }
         // Widen the gap permanently-ish while the host is unhappy.
         this.intervalMs = Math.min(
           5_000,
-          Math.max(this.minIntervalMs, this.intervalMs * 2),
+          Math.max(
+            this.minIntervalMs,
+            this.intervalMs * (isThrottle ? 2 : 1.5),
+          ),
         );
 
         if (attempt >= this.maxAttempts) throw e;
@@ -274,7 +297,7 @@ class RateLimiter {
             : backoff + jitter;
 
         console.warn(
-          `  [codal] HTTP ${status} — retry ${attempt}/${this.maxAttempts} in ${Math.round(wait)}ms (interval now ${this.intervalMs}ms)`,
+          `  [codal] ${status ? `HTTP ${status}` : `network error (${e instanceof Error ? e.message.split("\n")[0] : e})`} — retry ${attempt}/${this.maxAttempts} in ${Math.round(wait)}ms (interval now ${this.intervalMs}ms)`,
         );
         await sleep(wait);
       }
@@ -952,7 +975,6 @@ export function extractMonthlyReport(
 // ═══════════════════════════════════════════════════════════════
 // Quarterly income statement parsing (rayanDynamicStatement HTML)
 // ═══════════════════════════════════════════════════════════════
-
 export function extractIncomeStatement(
   html: string,
 ): QuarterlyFinancials | null {
@@ -963,14 +985,6 @@ export function extractIncomeStatement(
   const tableHtml = tableMatch[0];
 
   // ── Parse header: period-end dates + cumulative duration (months) ──
-  // Codal income-statement columns are CUMULATIVE year-to-date figures:
-  //   "دوره 3 ماهه منتهی به 1405/03/31"  → 3 months  (Q1)
-  //   "دوره 6 ماهه منتهی به 1405/06/31"  → 6 months  (H1 = Q1+Q2)
-  //   "دوره 9 ماهه …"                     → 9 months  (9M)
-  //   "دوره 12 ماهه …"                    → 12 months (FY)
-  // We need `durationMonths` to difference cumulative values into
-  // discrete single-quarter figures — otherwise a 6-month column gets
-  // mislabelled as "Q1" by period-end month alone.
   const periodEnds: string[] = [];
   const durationMonths: number[] = [];
   const headerRe =
@@ -982,7 +996,6 @@ export function extractIncomeStatement(
     if (!dm) continue;
     periodEnds.push(`${dm[1]}/${dm[2]}/${dm[3]}`);
 
-    // Capture the month count: "3 ماهه" / "6 ماهه" / "9 ماهه" / "12 ماهه"
     const monMatch = txt.match(/(\d{1,2})\s*ماهه/);
     durationMonths.push(monMatch ? parseInt(monMatch[1]!, 10) : 0);
   }
@@ -1023,6 +1036,7 @@ export function extractIncomeStatement(
     const rowHtml = rm[1]!;
     const labelMatch = rowHtml.match(/<td[^>]*>([\s\S]*?)<\/td>/);
     if (!labelMatch) continue;
+
     const label = labelMatch[1]!
       .replace(/<[^>]+>/g, "")
       .replace(/\s+/g, " ")
@@ -1031,42 +1045,54 @@ export function extractIncomeStatement(
     const values = extractRowValues(rowHtml, periodCount);
     if (values.every((v) => v === null)) continue;
 
-    // Skip cost/expense rows FIRST (they contain "درآمدهای عملیاتی" too)
+    // ---- Skip cost / expense rows first ----
     if (
-      label.includes("بهاى تمام شده") ||
-      label.includes("بهای تمام شده") ||
-      label.includes("بهاي تمام شده") ||
-      label.includes("هزينه") ||
-      label.includes("هزینه")
+      /بهای تمام شده|بهاى تمام شده|بهاي تمام شده|هزینه|هزينه/.test(label)
     ) {
       continue;
     }
 
+    // ---- Revenue (Operating Income) ----
     if (
-      (label.includes("درآمدهاي عملياتي") ||
-        label.includes("درآمدهای عملیاتی")) &&
-      revenues.length === 0
+      revenues.length === 0 &&
+      /درآمدهای? عملیاتی|درآمدهاي عملياتي|درآمدهاي عملیاتی/.test(label)
     ) {
       revenues = values;
-    } else if (
-      (label.includes("سود(زيان) خالص") || label.includes("سود خالص")) &&
-      !label.includes("هر سهم") &&
-      !label.includes("عمليات در حال تداوم") &&
-      !label.includes("عمليات متوقف") &&
-      netProfits.length === 0
+      continue;
+    }
+
+    // ---- Net Profit (سود خالص) - robust matching ----
+    if (
+      netProfits.length === 0 &&
+      /سود\s*\(?\s*زیان\s*\)?\s*خالص|سود\s*\(?\s*زيان\s*\)?\s*خالص|سود\s*خالص/.test(
+        label,
+      ) &&
+      !/هر سهم|پایه هر سهم|عملیات در حال تداوم|عملیات متوقف|عمليات در حال تداوم|عمليات متوقف/.test(
+        label,
+      )
     ) {
       netProfits = values;
-    } else if (
-      (label.includes("سود (زيان) خالص هر سهم") ||
-        label.includes("سود خالص هر سهم")) &&
-      eps.length === 0
+      continue;
+    }
+
+    // ---- EPS ----
+    if (
+      eps.length === 0 &&
+      /سود\s*\(?\s*زیان\s*\)?\s*خالص\s*هر\s*سهم|سود\s*خالص\s*هر\s*سهم/.test(
+        label,
+      )
     ) {
       eps = values;
-    } else if (
-      (label === "سرمايه" || label === "سرمایه") &&
-      capitals.length === 0
+      continue;
+    }
+
+    // ---- Capital ----
+    if (
+      capitals.length === 0 &&
+      (label === "سرمایه" || label === "سرمايه")
     ) {
       capitals = values;
+      continue;
     }
   }
 
@@ -1086,11 +1112,10 @@ export function extractIncomeStatement(
   }
 
   // ── Pick latest period: prefer positive interim margin ──
-  // ── Pick latest period: prefer positive interim margin ──
   let latestMargin: number | null = null;
   let latestPeriod: string | null = null;
 
-  // Step 1: first INTERIM period (not 12/29, not 12/30) with POSITIVE margin
+  // Step 1: first INTERIM period with POSITIVE margin
   for (let i = 0; i < margins.length; i++) {
     const period = periodEnds[i];
     const m = margins[i];
@@ -1103,7 +1128,7 @@ export function extractIncomeStatement(
     }
   }
 
-  // Step 2: no positive interim → first POSITIVE period (even full-year)
+  // Step 2: any positive margin
   if (latestMargin === null) {
     for (let i = 0; i < margins.length; i++) {
       const period = periodEnds[i];
@@ -1117,7 +1142,7 @@ export function extractIncomeStatement(
     }
   }
 
-  // Step 3: no positive period at all → first interim (even negative)
+  // Step 3: first interim (even negative)
   if (latestMargin === null) {
     for (let i = 0; i < margins.length; i++) {
       const period = periodEnds[i];
@@ -1130,7 +1155,7 @@ export function extractIncomeStatement(
     }
   }
 
-  // Step 4: nothing → first period (even negative, even full-year)
+  // Step 4: first available
   if (latestMargin === null) {
     const m = margins[0];
     if (m !== null && m !== undefined) {
@@ -1318,9 +1343,15 @@ export function extractMonthlySalesFull(
   const exportAmt = val(ROW.EXPORT, COL.VAL_MONTH) ?? 0;
   const service = val(ROW.SERVICE, COL.VAL_MONTH) ?? 0;
 
-  // Prefer the grand-total row if it exists; otherwise sum the three legs.
+  // Row 11 ("بهای تمام شده انتسابی") is an attributable-COST row in these
+  // reports — its value is NEGATIVE (see `details.totals`: 2,413,479 domestic
+  // vs −2,254,101 attributable cost). Reports with no grand-total row fall
+  // back to the sum, and summing the cost row produced GROSS PROFIT, not
+  // sales: 2,413,479 + 0 − 2,254,101 = 159,378 got stored as the month's
+  // sales. Exclude SERVICE when it is a cost (negative); keep it only when
+  // it is genuine service revenue.
   const grandTotal = val(ROW.TOTAL, COL.VAL_MONTH);
-  const total = grandTotal ?? domestic + exportAmt + service;
+  const total = grandTotal ?? domestic + exportAmt + Math.max(0, service);
 
   const ytdTotal = val(ROW.TOTAL, COL.VAL_YTD);
   const ytdPriorYearTotal = val(ROW.TOTAL, COL.VAL_PRIOR_YTD);
@@ -1406,8 +1437,75 @@ export async function fetchMonthlySales(
   return results;
 }
 
+/**
+ * Fetch the latest quarterly income statement for a symbol.
+ * This is much more efficient than fetching all quarters.
+ */
+export async function fetchLatestQuarterlyFinancials(
+  symbol: string,
+  maxYear?: number,
+): Promise<QuarterlyResult | null> {
+  // Search for quarterly reports - we only need the first page
+  // because Codal returns letters newest-first.
+  const letters = await searchLetters(symbol, {
+    LetterType: "6",
+    PageNumber: "1",
+  });
+
+  if (!letters || letters.length === 0) return null;
+
+  // Filter out revision/final reports
+  const filtered = letters.filter(
+    (l) =>
+      (l.title.includes("صورت") || l.title.includes("مالی")) &&
+      !l.title.includes("اصلاحیه") &&
+      !l.title.includes("تفسیری"),
+  );
+
+  // Sort by publishDateTime descending (newest first) and reject any that are
+  // older than maxYear (if provided).
+  for (const letter of filtered.sort(
+    (a, b) =>
+      new Date(b.publishDateTime).getTime() -
+      new Date(a.publishDateTime).getTime(),
+  )) {
+    const pubYear = new Date(letter.publishDateTime).getFullYear();
+    if (maxYear != null && pubYear > maxYear) continue;
+
+    try {
+      const html = await fetchIncomeStatementHtml(letter.url);
+      const fin = extractIncomeStatement(html);
+      if (fin && fin.latestMargin !== null) {
+        return {
+          latestPeriod: fin.latestPeriod,
+          latestMargin: fin.latestMargin,
+          financials: fin,
+          reportUrl: `${CODAL_BASE}${letter.url}`,
+        };
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // Log the exact letter that failed, so you can see the URL.
+      console.warn(
+        `  [${symbol}] quarterly parse failed (latest only): ${msg.slice(0, 100)} – URL ${CODAL_BASE}${letter.url}`,
+      );
+      if (/^Browser unavailable:/.test(msg)) {
+        console.warn(
+          `  [${symbol}] skipping remaining letters – browser cannot launch`,
+        );
+        return null;
+      }
+    }
+  }
+
+  return null;
+}
+
+// Keep the old fetchQuarterlyFinancials for backward compatibility
 export async function fetchQuarterlyFinancials(
   symbol: string,
+  maxYear?: number,
+  minYear?: number,
 ): Promise<QuarterlyResult | null> {
   // Paginate through Codal search to find ALL quarterly income statements
   // (not just page 1). Codal caps at 20 letters per page.
@@ -1429,8 +1527,19 @@ export async function fetchQuarterlyFinancials(
       !l.title.includes("تفسیری"),
   );
 
-  // Try letters newest-first; return the first that parses successfully.
+  // Filter by year range (using publishDateTime)
   for (const letter of filtered) {
+    if (maxYear != null || minYear != null) {
+      try {
+        const pub = new Date(letter.publishDateTime);
+        const yr = pub.getFullYear();
+        if (maxYear != null && yr > maxYear) continue;
+        if (minYear != null && yr < minYear) continue;
+      } catch {
+        // malformed date → keep it, it has a year anyway
+      }
+    }
+
     try {
       const html = await fetchIncomeStatementHtml(letter.url);
       const fin = extractIncomeStatement(html);
@@ -1447,9 +1556,6 @@ export async function fetchQuarterlyFinancials(
       console.warn(
         `  [${symbol}] quarterly parse failed: ${msg.slice(0, 100)}`,
       );
-      // The browser itself is unusable (sandbox / no Chrome). Trying the
-      // remaining letters would only repeat the same failure, so stop here
-      // rather than emitting one identical error per letter.
       if (/^Browser unavailable:/.test(msg)) {
         console.warn(
           `  [${symbol}] skipping remaining ${filtered.length - filtered.indexOf(letter) - 1} letters — browser cannot launch`,
