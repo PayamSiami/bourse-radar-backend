@@ -53,6 +53,8 @@ export const WATCHLIST: Array<WatchlistItem> = [
   { sym: "فاراک", name: "ماشین‌سازی اراک", type: "general" },
   { sym: "فوکا", name: "فولاد کاویان", type: "general" },
   { sym: "فسرب", name: "ملی سرب و روی", type: "general" },
+  { sym: "فسوژ", name: "سوژمیران", type: "general" },
+
   { sym: "فسبزوار", name: "پارس فولاد سبزوار", type: "general" },
   { sym: "فاسمین", name: "کالسیمین", type: "general" },
   { sym: "کروی", name: "توسعه معادن روی ایران", type: "general" },

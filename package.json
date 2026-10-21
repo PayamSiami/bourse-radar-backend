@@ -5,17 +5,17 @@
   "main": "dist/src/index.js",
   "type": "module",
   "imports": {
-    "#config": "./dist/src/config/index.js",
-    "#types/*": "./dist/src/types/*.js",
-    "#utils/*": "./dist/src/utils/*.js",
-    "#db/*": "./dist/src/db/*.js",
-    "#cache/*": "./dist/src/cache/*.js",
-    "#scrapers/*": "./dist/src/scrapers/*.js",
-    "#services/*": "./dist/src/services/*.js",
-    "#routes/*": "./dist/src/routes/*.js",
-    "#plugins/*": "./dist/src/plugins/*.js",
-    "#jobs/*": "./dist/src/jobs/*.js",
-    "#migrations/*": "./dist/src/migrations/*.js"
+ "#config": "./dist/config/index.js",
+    "#types/*": "./dist/types/*.js",
+    "#utils/*": "./dist/utils/*.js",
+    "#db/*": "./dist/db/*.js",
+    "#cache/*": "./dist/cache/*.js",
+    "#scrapers/*": "./dist/scrapers/*.js",
+    "#services/*": "./dist/services/*.js",
+    "#routes/*": "./dist/routes/*.js",
+    "#plugins/*": "./dist/plugins/*.js",
+    "#jobs/*": "./dist/jobs/*.js",
+    "#migrations/*": "./dist/migrations/*.js"
   },
   "engines": {
     "node": ">=20.0.0"
