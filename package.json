@@ -2,7 +2,7 @@
   "name": "bourse-radar-api",
   "version": "0.1.0",
   "description": "Bourse Radar API - Tehran Stock Exchange quantitative ranking engine",
-  "main": "dist/src/index.js",
+  "main": "dist/index.js",
   "type": "module",
   "imports": {
  "#config": "./dist/config/index.js",
@@ -25,7 +25,8 @@
     "dev:api": "tsx watch --tsconfig tsconfig.json src/index.ts",
     "dev:test": "vitest watch src",
     "build": "tsc",
-    "start": "node dist/src/index.js",
+    "start": "node dist/index.js",
+    "start:dev": "node dist/src/index.js",
     "test": "vitest run",
     "test:watch": "vitest watch src",
     "test:cover": "vitest run --coverage",
