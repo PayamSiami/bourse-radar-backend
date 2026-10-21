@@ -191,7 +191,7 @@ export async function registerRankingsRoutes(
         description: "Rankings broken down by sector",
       },
     },
-    async (req, reply) => {
+    async (_req, reply) => {
       const cacheKey = "rankings:sectors";
       const { data, hit } = await getOrSet(
         server,

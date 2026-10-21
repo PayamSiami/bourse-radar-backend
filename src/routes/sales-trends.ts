@@ -33,7 +33,7 @@ export async function registerSalesTrendsRoutes(
           "Top gainers/losers (MoM) and cumulative growth (from Codal YTD when available, otherwise 12-month rolling).",
       },
     },
-    async (req, reply) => {
+    async (_req, reply) => {
       // Trends only change when monthly_sales is ingested (daily at 14:00),
       // so a 10-minute shared entry is both safe and measurably faster —
       // the cumulative query alone fans out to ~4 CTEs.

@@ -3,9 +3,8 @@ import { z } from "zod";
 
 /**
  * GET /api/stocks
- * List all symbols with Forward P/E, confidence, and sector.
+ * List all TSE symbols with Forward P/E, confidence, and sector.
  */
-
 const QuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(200).default(50),

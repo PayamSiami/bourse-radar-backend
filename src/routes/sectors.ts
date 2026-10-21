@@ -59,7 +59,7 @@ export async function registerSectorsRoutes(
         response: { 200: SectorsResponseSchema },
       },
     },
-    async (req, reply) => {
+    async (_req, reply) => {
       // Sectors change only when stocks/forward_pe refresh (daily cron),
       // so a 5-minute shared entry is safe and collapses the homepage's
       // two-request fan-out (rankings + sectors) into zero DB hits on repeat.

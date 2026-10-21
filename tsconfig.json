@@ -4,35 +4,38 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
+
+    "rootDir": "./src",
     "outDir": "./dist",
-    "rootDir": "./",
+
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "noUnusedLocals": true,
-    "noUnusedParameters": false,
+    "noUnusedParameters": true, // or false — be consistent
+
     "noEmitOnError": true,
     "resolveJsonModule": true,
     "esModuleInterop": true,
-    "ignoreDeprecations": "6.0",
-    "baseUrl": ".",
+
     "paths": {
-      "#config": ["src/config/index.ts"],
-      "#types/*": ["src/types/*.ts"],
-      "#utils/*": ["src/utils/*.ts"],
-      "#db/*": ["src/db/*.ts"],
-      "#cache/*": ["src/cache/*.ts"],
-      "#scrapers/*": ["src/scrapers/*.ts"],
-      "#services/*": ["src/services/*.ts"],
-      "#routes/*": ["src/routes/*.ts"],
-      "#plugins/*": ["src/plugins/*.ts"],
-      "#jobs/*": ["src/jobs/*.ts"]
+      "#config": ["./src/config/index.ts"],
+      "#types/*": ["./src/types/*.ts"],
+      "#utils/*": ["./src/utils/*.ts"],
+      "#db/*": ["./src/db/*.ts"],
+      "#cache/*": ["./src/cache/*.ts"],
+      "#scrapers/*": ["./src/scrapers/*.ts"],
+      "#services/*": ["./src/services/*.ts"],
+      "#routes/*": ["./src/routes/*.ts"],
+      "#plugins/*": ["./src/plugins/*.ts"],
+      "#jobs/*": ["./src/jobs/*.ts"]
     },
+
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "sourceMap": true,
     "declaration": false
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"],
-  "exclude": ["node_modules", "dist", "tests"]
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
 }

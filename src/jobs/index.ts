@@ -62,7 +62,7 @@ export async function initializeJobs(server: FastifyInstance): Promise<void> {
       schedule: "*/5 9-12 * * 0-4",
       task: async () => {
         logger.info("[job] ingesting real-time prices");
-        const s = await fetchCurrentPrices(server.db);
+        const s = await fetchCurrentPrices();
         const n = await insertPrices(server.db, s);
         logger.info(`[job] inserted ${n} price ticks`);
       },

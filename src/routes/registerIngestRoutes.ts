@@ -462,8 +462,8 @@ export function registerIngestRoutes(server: FastifyInstance): void {
         },
       },
     },
-    async (req, reply) => {
-      const query = req.query as Record<string, unknown>;
+    async (_req, reply) => {
+      const query = _req.query as Record<string, unknown>;
       const targets = parseArchiveTargets(query);
       const mode = !targets
         ? "full pipeline"
@@ -555,7 +555,7 @@ export function registerIngestRoutes(server: FastifyInstance): void {
         },
       },
     },
-    async (req, reply) => {
+    async (_req, reply) => {
       if (ingestInFlight) return busy(reply);
       // Single-flight, but NOT async (quick)
       let p!: Promise<unknown>;
@@ -618,7 +618,7 @@ export function registerIngestRoutes(server: FastifyInstance): void {
         },
       },
     },
-    async (req, reply) => {
+    async (_req, reply) => {
       if (ingestInFlight) return busy(reply);
       let p!: Promise<unknown>;
       let res!: (v: unknown) => void;
@@ -682,7 +682,7 @@ export function registerIngestRoutes(server: FastifyInstance): void {
         },
       },
     },
-    async (req, reply) => {
+    async (_req, reply) => {
       if (ingestInFlight) return busy(reply);
       let p!: Promise<unknown>;
       let res!: (v: unknown) => void;
@@ -704,7 +704,7 @@ export function registerIngestRoutes(server: FastifyInstance): void {
         });
       }
       try {
-        const query = req.query as Record<string, unknown>;
+        const query = _req.query as Record<string, unknown>;
         const full = query?.full === "1" || query?.full === "true";
         const salesCount = await runMonthlySalesOnly(server.db, full);
         const cacheBusted = await bustReadCaches(server);
@@ -743,7 +743,7 @@ export function registerIngestRoutes(server: FastifyInstance): void {
         },
       },
     },
-    async (req, reply) => {
+    async (_req, reply) => {
       if (ingestInFlight) return busy(reply);
       let p!: Promise<unknown>;
       let res!: (v: unknown) => void;
@@ -796,7 +796,7 @@ export function registerIngestRoutes(server: FastifyInstance): void {
         },
       },
     },
-    async (req, reply) => {
+    async (_req, reply) => {
       if (ingestInFlight) return busy(reply);
       let p!: Promise<unknown>;
       let res!: (v: unknown) => void;
@@ -881,9 +881,9 @@ export function registerIngestRoutes(server: FastifyInstance): void {
         },
       },
     },
-    async (req, reply) => {
-      const { symbol } = req.params as { symbol: string };
-      const { from, to } = boundsFrom(req.query as Record<string, unknown>);
+    async (_req, reply) => {
+      const { symbol } = _req.params as { symbol: string };
+      const { from, to } = boundsFrom(_req.query as Record<string, unknown>);
       const sym = safeDecode(symbol);
 
       // Single symbol legacy stays sync (fast), but still tracks status
@@ -942,8 +942,8 @@ export function registerIngestRoutes(server: FastifyInstance): void {
         },
       },
     },
-    async (req, reply) => {
-      const { from, to } = boundsFrom(req.query as Record<string, unknown>);
+    async (_req, reply) => {
+      const { from, to } = boundsFrom(_req.query as Record<string, unknown>);
 
       const promise = (async () => {
         const symbols = WATCHLIST.map((w) => w.sym);

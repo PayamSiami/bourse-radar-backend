@@ -52,36 +52,108 @@ const H = {
 // 429/5xx are retried with exponential backoff + jitter, honouring
 // `Retry-After` when Codal sends it.
 
-/** HTTP error carrying the status, so the limiter can decide to retry. */
+/**
+ * Errors returned during Codal operations.
+ * Provides structured error handling with context for debugging and retry logic.
+ */
 export class CodalHttpError extends Error {
   readonly status: number;
   readonly retryAfterMs: number | null;
+  readonly timestamp: number;
+  readonly source: string;
 
   constructor(
     status: number,
     message: string,
     retryAfterMs: number | null = null,
+    source: string = "unknown",
   ) {
     super(message);
     this.name = "CodalHttpError";
     this.status = status;
     this.retryAfterMs = retryAfterMs;
+    this.timestamp = Date.now();
+    this.source = source;
+  }
+
+  /** Get human-friendly error message with context */
+  getHumanMessage(): string {
+    const timeStr = new Date(this.timestamp).toLocaleTimeString();
+    if (this.status >= 429) {
+      return `Codal rate limited at ${timeStr}. ${this.retryAfterMs ? `Try again in ${this.retryAfterMs / 1000}s` : 'Wait before retrying'}.`;
+    }
+    return `Codal {${this.source}} failed at ${timeStr}: ${this.message} (HTTP ${this.status})`;
+  }
+
+  /** Check if this error should trigger a circuit breaker */
+  shouldCircuitBreak(): boolean {
+    return this.status >= 429 && this.retryAfterMs === null;
+  }
+
+  /** Check if this error is retriable */
+  get isRetriable(): boolean {
+    return this.status >= 429 || this.status >= 500;
+  }
+}
+
+/**
+ * Temporary blocking issues during scraping operations.
+ * Some errors like rate limits, CAPTCHA, or network disconnections should not cause full failures.
+ */
+export class TemporaryScraperError extends Error {
+  readonly reason: string;
+  readonly timestamp: number;
+
+  constructor(
+    message: string,
+    _retryAfterMs: number | null = null,
+    reason: string = "temporary",
+  ) {
+    super(message);
+    this.name = "TemporaryScraperError";
+    this.reason = reason;
+    this.timestamp = Date.now();
+  }
+
+  getHumanMessage(): string {
+    return `${this.reason}: ${this.message}`;
+  }
+
+  get shouldRetry(): boolean {
+    return true;
+  }
+}
+
+/**
+ * EPERM error for browser launch failures on Windows.
+ */
+export class BrowserLaunchError extends TemporaryScraperError {
+  constructor(message: string) {
+    super(message, null, "browser launch failure");
+    this.name = "BrowserLaunchError";
   }
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Shared circuit breaker across ALL Codal traffic.
+ * Shared circuit breaker across ALL Codal traffic to prevent IP bans.
  *
- * Codal bans by IP, and the ban is global — it hits the search host and the
- * report host alike. Per-call retry is therefore actively harmful: a symbol
- * that returns 429 five times is followed by the next symbol doing the same,
- * which turns a transient throttle into a sustained ban.
+ * # Purpose
+ * Codal bans by IP address, affecting both search and report hosts. This
+ * circuit breaker prevents continued requests after detecting a ban.
  *
- * After `THRESHOLD` throttles inside the window we stop sending requests
- * entirely for `COOLDOWN_MS`, so the limit window can expire instead of
- * being extended by further traffic. `Retry-After` raises the cooldown when
- * the server actually tells us how long to wait.
+ * # How It Works
+ * - Monitors HTTP 429 (rate limit) responses within a rolling window
+ * - After THRESHOLD throttles (default 6), stops all Codal requests
+ * - Maintains cooldown period (default 120s) to let temporary bans expire
+ * - Auto-resumes after cooldown, adjusting throttle detection sensitivity
+ *
+ * # Configuration
+ * @property {number} THRESHOLD = 6 - Throttles before opening circuit
+ * @property {number} WINDOW_MS = 60_000 - Rolling window for throttle counting
+ * @property {number} COOLDOWN_MS = 120_000 - Silence duration when circuit opens
+ *
+ * @see RateLimiter - Rate limiter for adding artificial delays between requests
  */
 const THRESHOLD = 6; // throttles inside the window before we stop
 const WINDOW_MS = 60_000; // rolling window for counting throttles
@@ -658,8 +730,22 @@ export function extractJalaliPeriodEnd(
 ): { jy: number; jm: number; jd: number } | null {
   const clean = toAsciiDigits(title);
   const m = clean.match(/منتهی\s+به\s+(\d{4})\/(\d{2})\/(\d{2})/);
-  if (!m) return null;
-  return { jy: parseInt(m[1]!), jm: parseInt(m[2]!), jd: parseInt(m[3]!) };
+  if (!m) {
+    return null;
+  }
+
+  const [_, jyStr, jmStr, jdStr] = m;
+  // Use non-null assertions as regex guarantees these are strings
+  const jy = parseInt(jyStr!, 10);
+  const jm = parseInt(jmStr!, 10);
+  const jd = parseInt(jdStr!, 10);
+
+  // Validate date components to prevent invalid dates
+  if (jy < 1300 || jy > 1500 || jm < 1 || jm > 12 || jd < 1 || jd > 31) {
+    return null;
+  }
+
+  return { jy, jm, jd };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1326,7 +1412,7 @@ export function extractMonthlySalesFull(
   html: string,
   title: string,
   reportUrl: string,
-  publishDateTime: string,
+  _publishDateTime: string,
 ): MonthlySalesFull | null {
   const cells = extractCellsForTable(html, 1197);
   if (cells.length === 0) return null;

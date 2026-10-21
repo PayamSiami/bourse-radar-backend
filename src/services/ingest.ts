@@ -29,11 +29,7 @@ import { jalaliToGregorian, toIsoDate } from "#utils/jalali";
 
 type PostgresDb = ReturnType<typeof postgres>;
 
-export type WatchlistType =
-  | "general"
-  | "bank"
-  | "insurance"
-  | "holding";
+export type WatchlistType = "general" | "bank" | "insurance" | "holding";
 
 export type WatchlistItem = {
   sym: string;
@@ -43,117 +39,118 @@ export type WatchlistItem = {
 
 export const WATCHLIST: Array<WatchlistItem> = [
   // ── فلزات اساسی (Basic Metals) ──────────────────────
-  // { sym: "فولاد",  name: "فولاد مبارکه",            type: "general" },
-  // { sym: "فخوز",   name: "فولاد خوزستان",           type: "general" },
-  // { sym: "فخاس",   name: "فولاد خراسان",            type: "general" },
-  // { sym: "ذوب",    name: "ذوب‌آهن اصفهان",          type: "general" },
-  // { sym: "فملی",   name: "ملی صنایع مس ایران",      type: "general" },
-  // { sym: "فایرا",  name: "آلومینیوم ایران",          type: "general" },
-  // { sym: "فمراد",  name: "آلومراد",                 type: "general" },
-  // { sym: "فپارس",  name: "آلومینیوم پارس",          type: "general" },
-  // { sym: "فالوم",  name: "آلومتک",                  type: "general" },
-  // { sym: "فزرین",  name: "معدن زرین آسیا",          type: "general" },
-  // { sym: "فجر",    name: "فولاد امیرکبیر کاشان",    type: "general" },
-  // { sym: "فاراک",  name: "ماشین‌سازی اراک",          type: "general" },
-  // { sym: "فوکا",   name: "فولاد کاویان",            type: "general" },
-  // { sym: "فسرب",   name: "ملی سرب و روی",           type: "general" },
-  { sym: "فسبزوار", name: "پارس فولاد سبزوار",        type: "general" },
-  // { sym: "فاسمین", name: "کالسیمین",                type: "general" },
-  // { sym: "کروی",   name: "توسعه معادن روی ایران",   type: "general" },
-  // { sym: "کگل",    name: "گل‌گهر",                  type: "general" },
-  // { sym: "کچاد",   name: "چادرملو",                 type: "general" },
+  { sym: "فولاد", name: "فولاد مبارکه", type: "general" },
+  { sym: "فخوز", name: "فولاد خوزستان", type: "general" },
+  { sym: "فخاس", name: "فولاد خراسان", type: "general" },
+  { sym: "ذوب", name: "ذوب‌آهن اصفهان", type: "general" },
+  { sym: "فملی", name: "ملی صنایع مس ایران", type: "general" },
+  { sym: "فایرا", name: "آلومینیوم ایران", type: "general" },
+  { sym: "فمراد", name: "آلومراد", type: "general" },
+  { sym: "فپارس", name: "آلومینیوم پارس", type: "general" },
+  { sym: "فالوم", name: "آلومتک", type: "general" },
+  { sym: "فزرین", name: "معدن زرین آسیا", type: "general" },
+  { sym: "فجر", name: "فولاد امیرکبیر کاشان", type: "general" },
+  { sym: "فاراک", name: "ماشین‌سازی اراک", type: "general" },
+  { sym: "فوکا", name: "فولاد کاویان", type: "general" },
+  { sym: "فسرب", name: "ملی سرب و روی", type: "general" },
+  { sym: "فسبزوار", name: "پارس فولاد سبزوار", type: "general" },
+  { sym: "فاسمین", name: "کالسیمین", type: "general" },
+  { sym: "کروی", name: "توسعه معادن روی ایران", type: "general" },
+  { sym: "کگل", name: "گل‌گهر", type: "general" },
+  { sym: "کچاد", name: "چادرملو", type: "general" },
 
   // ── زراعت و دام (Agriculture & Livestock) ──────────
-  { sym: "زشگزا",  name: "شیر و گوشت زاگرس شهرکرد",   type: "general" },
+  { sym: "زشگزا", name: "شیر و گوشت زاگرس شهرکرد", type: "general" },
 
   // ── پالایش و پتروشیمی (Refining & Petrochemical) ────
-  // { sym: "شپنا",    name: "پالایش نفت اصفهان",            type: "general" },
-  // { sym: "شبندر",   name: "پالایش نفت بندرعباس",          type: "general" },
-  // { sym: "شتران",   name: "پالایش نفت تهران",             type: "general" },
-  // { sym: "شبریز",   name: "پالایش نفت تبریز",             type: "general" },
-  // { sym: "شپدیس",   name: "پتروشیمی پردیس",               type: "general" },
-  // { sym: "شیراز",   name: "پتروشیمی شیراز",               type: "general" },
-  // { sym: "شاراک",   name: "پتروشیمی شازند",               type: "general" },
-  // { sym: "شپارس",   name: "بین‌المللی محصولات پارس",       type: "general" },
-  // { sym: "شپاکسا",  name: "پاکسان",                       type: "general" },
-  // { sym: "شخارک",   name: "پتروشیمی خارک",                type: "general" },
-  // { sym: "تاپیکو",  name: "سرمایه‌گذاری نفت و گاز تامین",  type: "general" },
+  { sym: "شپنا", name: "پالایش نفت اصفهان", type: "general" },
+  { sym: "شبندر", name: "پالایش نفت بندرعباس", type: "general" },
+  { sym: "شتران", name: "پالایش نفت تهران", type: "general" },
+  { sym: "شبریز", name: "پالایش نفت تبریز", type: "general" },
+  { sym: "شپدیس", name: "پتروشیمی پردیس", type: "general" },
+  { sym: "شیراز", name: "پتروشیمی شیراز", type: "general" },
+  { sym: "شاراک", name: "پتروشیمی شازند", type: "general" },
+  { sym: "شپارس", name: "بین‌المللی محصولات پارس", type: "general" },
+  { sym: "شپاکسا", name: "پاکسان", type: "general" },
+  { sym: "شخارک", name: "پتروشیمی خارک", type: "general" },
+  { sym: "تاپیکو", name: "سرمایه‌گذاری نفت و گاز تامین", type: "general" },
 
   // ── شیمیایی (Chemicals) ─────────────────────────────
-  // { sym: "شکام",   name: "صنایع شیمیایی کیمیاگران امروز", type: "general" },
-  // { sym: "شسینا",  name: "صنایع شیمیایی سینا",            type: "general" },
-  // { sym: "شبصیر",  name: "پتروشیمی قائد بصیر",            type: "general" },
-  // { sym: "شغدیر",  name: "پتروشیمی غدیر",                 type: "general" },
-  // { sym: "شجم",    name: "صنایع پتروشیمی تخت جمشید",      type: "general" },
-  // { sym: "شفن",    name: "پتروشیمی فن‌آوران",             type: "general" },
+  { sym: "شکام", name: "صنایع شیمیایی کیمیاگران امروز", type: "general" },
+  { sym: "شسینا", name: "صنایع شیمیایی سینا", type: "general" },
+  { sym: "شبصیر", name: "پتروشیمی قائد بصیر", type: "general" },
+  { sym: "شغدیر", name: "پتروشیمی غدیر", type: "general" },
+  { sym: "شجم", name: "صنایع پتروشیمی تخت جمشید", type: "general" },
+  { sym: "شفن", name: "پتروشیمی فن‌آوران", type: "general" },
 
   // ── خودرو (Automotive) ──────────────────────────────
-  // { sym: "خودرو",  name: "ایران خودرو",        type: "general" },
-  // { sym: "خساپا",  name: "سایپا",              type: "general" },
-  // { sym: "خپارس",  name: "پارس خودرو",         type: "general" },
-  // { sym: "پتایر",  name: "ایران تایر",         type: "general" },
-  // { sym: "پاسا",   name: "ایران یاسا تایر",    type: "general" },
+  { sym: "خودرو", name: "ایران خودرو", type: "general" },
+  { sym: "خساپا", name: "سایپا", type: "general" },
+  { sym: "خپارس", name: "پارس خودرو", type: "general" },
+  { sym: "پتایر", name: "ایران تایر", type: "general" },
+  { sym: "پاسا", name: "ایران یاسا تایر", type: "general" },
 
   // ── دارویی (Pharmaceuticals) ────────────────────────
-  // { sym: "برکت",   name: "گروه دارویی برکت",                 type: "general" },
-  // { sym: "دتولید", name: "داروسازی تولید دارو",              type: "general" },
-  // { sym: "دسبحا",  name: "گروه دارویی سبحان",                type: "general" },
-  // { sym: "دلقما",  name: "دارویی لقمان",                     type: "general" },
-  // { sym: "دعبید",  name: "لابراتوار داروسازی دکتر عبیدی",    type: "general" },
-  // { sym: "دپارس",  name: "پارس دارو",                        type: "general" },
-  // { sym: "دیران",  name: "ایران دارو",                       type: "general" },
-  // { sym: "دالبر",  name: "البرز دارو",                       type: "general" },
+  { sym: "برکت", name: "گروه دارویی برکت", type: "general" },
+  { sym: "دتولید", name: "داروسازی تولید دارو", type: "general" },
+  { sym: "دسبحا", name: "گروه دارویی سبحان", type: "general" },
+  { sym: "دلقما", name: "دارویی لقمان", type: "general" },
+  { sym: "دعبید", name: "لابراتوار داروسازی دکتر عبیدی", type: "general" },
+  { sym: "دپارس", name: "پارس دارو", type: "general" },
+  { sym: "دیران", name: "ایران دارو", type: "general" },
+  { sym: "دالبر", name: "البرز دارو", type: "general" },
 
   // ── غذایی (Food) ────────────────────────────────────
-  // { sym: "غپونه",  name: "نوش پونه مشهد",           type: "general" },
-  // { sym: "غشهد",   name: "شهد ایران",               type: "general" },
-  // { sym: "غچین",   name: "کشت و صنعت چین چین",      type: "general" },
-  // { sym: "غگرجی",  name: "بیسکویت گرجی",            type: "general" },
-  // { sym: "غبهنوش", name: "بهنوش ایران",             type: "general" },
+  { sym: "غپونه", name: "نوش پونه مشهد", type: "general" },
+  { sym: "غشهد", name: "شهد ایران", type: "general" },
+  { sym: "غچین", name: "کشت و صنعت چین چین", type: "general" },
+  { sym: "غگرجی", name: "بیسکویت گرجی", type: "general" },
+  { sym: "غبهنوش", name: "بهنوش ایران", type: "general" },
+  { sym: "غدانه", name: "پنبه و دانه های روغنی خراسان", type: "general" },
 
   // ── سیمان (Cement) ──────────────────────────────────
-  // { sym: "ستران",  name: "سیمان تهران",             type: "general" },
-  // { sym: "سفارس",  name: "سیمان فارس و خوزستان",    type: "general" },
-  // { sym: "سبزوا",  name: "سیمان لار سبزوار",        type: "general" },
+  { sym: "ستران", name: "سیمان تهران", type: "general" },
+  { sym: "سفارس", name: "سیمان فارس و خوزستان", type: "general" },
+  { sym: "سبزوا", name: "سیمان لار سبزوار", type: "general" },
 
   // ── صنعتی و سایر (Industrial & Others) ──────────────
-  // { sym: "کپشیر",  name: "پشم شیشه ایران",           type: "general" },
-  // { sym: "تپمپی",  name: "پمپ‌سازی ایران",           type: "general" },
-  // { sym: "پلاسک",  name: "پلاسکوکار",                type: "general" },
-  // { sym: "کسرام",  name: "پارس سرام",                type: "general" },
-  // { sym: "کچینی",  name: "کارخانه چینی ایران",       type: "general" },
-  // { sym: "لپارس",  name: "پارس الکتریک",             type: "general" },
-  // { sym: "حکشتی",  name: "کشتیرانی",                 type: "general" },
-  // { sym: "تمحرکه", name: "ماشین‌سازی نیرومحرکه",     type: "general" },
+  { sym: "کپشیر", name: "پشم شیشه ایران", type: "general" },
+  { sym: "تپمپی", name: "پمپ‌سازی ایران", type: "general" },
+  { sym: "پلاسک", name: "پلاسکوکار", type: "general" },
+  { sym: "کسرام", name: "پارس سرام", type: "general" },
+  { sym: "کچینی", name: "کارخانه چینی ایران", type: "general" },
+  { sym: "لپارس", name: "پارس الکتریک", type: "general" },
+  { sym: "حکشتی", name: "کشتیرانی", type: "general" },
+  { sym: "تمحرکه", name: "ماشین‌سازی نیرومحرکه", type: "general" },
 
   // ── بانک‌ها (Banks) ─────────────────────────────────
-  // { sym: "وبملت",  name: "بانک ملت",        type: "bank" },
-  // { sym: "وبصادر", name: "بانک صادرات",     type: "bank" },
-  // { sym: "وپاسار", name: "بانک پاسارگاد",   type: "bank" },
-  // { sym: "وتجارت", name: "بانک تجارت",      type: "bank" },
-  // { sym: "وبفارس", name: "بانک پارسیان",    type: "bank" },
-  // { sym: "وکار",   name: "بانک کارآفرین",   type: "bank" },
-  // { sym: "ونوین",  name: "بانک اقتصاد نوین", type: "bank" },
-  // { sym: "وخاور",  name: "بانک خاورمیانه",  type: "bank" },
-  // { sym: "وسینا",  name: "بانک سینا",       type: "bank" },
-  // { sym: "وپست",   name: "پست بانک",        type: "bank" },
+  { sym: "وبملت", name: "بانک ملت", type: "bank" },
+  { sym: "وبصادر", name: "بانک صادرات", type: "bank" },
+  { sym: "وپاسار", name: "بانک پاسارگاد", type: "bank" },
+  { sym: "وتجارت", name: "بانک تجارت", type: "bank" },
+  { sym: "وبفارس", name: "بانک پارسیان", type: "bank" },
+  { sym: "وکار", name: "بانک کارآفرین", type: "bank" },
+  { sym: "ونوین", name: "بانک اقتصاد نوین", type: "bank" },
+  { sym: "وخاور", name: "بانک خاورمیانه", type: "bank" },
+  { sym: "وسینا", name: "بانک سینا", type: "bank" },
+  { sym: "وپست", name: "پست بانک", type: "bank" },
 
   // ── بیمه (Insurance) ────────────────────────────────
-  // { sym: "وبیمه",   name: "بیمه ایران",     type: "insurance" },
-  // { sym: "وپارسیان", name: "بیمه پارسیان",  type: "insurance" },
-  // { sym: "ودی",     name: "بیمه دی",        type: "insurance" },
-  // { sym: "ونیکی",   name: "بیمه نیکان",     type: "insurance" },
-  // { sym: "آسیا",    name: "بیمه آسیا",      type: "insurance" },
-  // { sym: "البرز",   name: "بیمه البرز",     type: "insurance" },
-  // { sym: "دانا",    name: "بیمه دانا",      type: "insurance" },
+  { sym: "وبیمه", name: "بیمه ایران", type: "insurance" },
+  { sym: "وپارسیان", name: "بیمه پارسیان", type: "insurance" },
+  { sym: "ودی", name: "بیمه دی", type: "insurance" },
+  { sym: "ونیکی", name: "بیمه نیکان", type: "insurance" },
+  { sym: "آسیا", name: "بیمه آسیا", type: "insurance" },
+  { sym: "البرز", name: "بیمه البرز", type: "insurance" },
+  { sym: "دانا", name: "بیمه دانا", type: "insurance" },
 
   // ── هلدینگ‌ها (Holdings) ────────────────────────────
-  // { sym: "پارسان",  name: "گسترش نفت و گاز پارسیان",          type: "holding" },
-  // { sym: "شستا",    name: "سرمایه‌گذاری تأمین اجتماعی",       type: "holding" },
-  // { sym: "خگستر",   name: "گسترش سرمایه‌گذاری ایران‌خودرو",   type: "holding" },
-  // { sym: "وغدیر",   name: "سرمایه‌گذاری غدیر",                type: "holding" },
-  // { sym: "وامید",   name: "سرمایه‌گذاری امید",                type: "holding" },
-  // { sym: "وصندوق",  name: "سرمایه‌گذاری صندوق بازنشستگی",     type: "holding" },
+  { sym: "پارسان", name: "گسترش نفت و گاز پارسیان", type: "holding" },
+  { sym: "شستا", name: "سرمایه‌گذاری تأمین اجتماعی", type: "holding" },
+  { sym: "خگستر", name: "گسترش سرمایه‌گذاری ایران‌خودرو", type: "holding" },
+  { sym: "وغدیر", name: "سرمایه‌گذاری غدیر", type: "holding" },
+  { sym: "وامید", name: "سرمایه‌گذاری امید", type: "holding" },
+  { sym: "وصندوق", name: "سرمایه‌گذاری صندوق بازنشستگی", type: "holding" },
 ];
 
 /** چک سریع عضویت نماد در واچ‌لیست */
@@ -656,7 +653,7 @@ export function toDiscreteQuarters(f: {
 export async function syncQuarterlyFinancials(
   sql: PostgresDb,
   symbols: string[],
-  minYear?: number,
+  _minYear?: number,
   maxYear?: number,
 ): Promise<number> {
   let count = 0;
@@ -880,16 +877,6 @@ export async function recomputeForwardPe(sql: PostgresDb): Promise<number> {
     const hasFullYear = monthCount12 >= 12;
     const yearlySales12 = hasFullYear ? sumSales12 : avgSales12 * 12;
 
-    if (r.symbol === "زشگزا") {
-      console.log("=== DEBUG زشگزا ===");
-      console.log("sumSales:", sumSales);
-      console.log("monthCount:", monthCount);
-      console.log("monthCountWithService:", monthCountWithService);
-      console.log("monthlyGrossMargin:", monthlyGrossMargin);
-      console.log("quarterlyMargin:", quarterlyMargin);
-      console.log("quarter label (r.quarter):", r.quarter);
-    }
-
     // ---------- پیش‌فرض بخشی (sector default) ----------
     // حاشیه سود محافظه‌کارانه بر اساس صنعت
     let sectorDefault: number | null = null;
@@ -899,12 +886,12 @@ export async function recomputeForwardPe(sql: PostgresDb): Promise<number> {
     else if (sector.includes("زراعت") || sector.includes("کشاورزی"))
       sectorDefault = 0.06; // زراعت و خدمات وابسته
     else if (sector.includes("غذایی")) sectorDefault = 0.07;
-    else if (sector.includes("دارو")) sectorDefault = 0.10;
+    else if (sector.includes("دارو")) sectorDefault = 0.1;
     else if (sector.includes("فلز") || sector.includes("معدن"))
       sectorDefault = 0.12;
     else if (sector.includes("پتروشیمی") || sector.includes("شیمیایی"))
       sectorDefault = 0.14;
-    else if (sector.includes("سیمان")) sectorDefault = 0.10;
+    else if (sector.includes("سیمان")) sectorDefault = 0.1;
     else if (sector.includes("خودرو")) sectorDefault = 0.05;
     else if (sector.includes("ساختمان")) sectorDefault = 0.06;
 
@@ -980,7 +967,7 @@ export async function recomputeForwardPe(sql: PostgresDb): Promise<number> {
           confidenceScore = Math.max(0.25, confidenceScore - 0.25);
         }
         if (marginIsAssumed) {
-          confidenceScore = Math.max(0.20, confidenceScore - 0.35);
+          confidenceScore = Math.max(0.2, confidenceScore - 0.35);
         }
         confidence =
           confidenceScore >= 0.75
@@ -1221,9 +1208,7 @@ export async function syncMarketCapHistory(sql: PostgresDb): Promise<number> {
   return count;
 }
 
-export async function fetchCurrentPrices(
-  sql: PostgresDb,
-): Promise<ResolvedInstrument[]> {
+export async function fetchCurrentPrices(): Promise<ResolvedInstrument[]> {
   const out: ResolvedInstrument[] = [];
   for (const { sym, name } of WATCHLIST) {
     try {
