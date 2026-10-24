@@ -13,7 +13,7 @@ import Fastify from "fastify";
 import { config } from "#config";
 import { registerPlugins } from "#plugins/index";
 import { registerRoutes } from "#routes/index";
-import { initializeJobs } from "#jobs/index";
+// import { initializeJobs } from "#jobs/index";
 import { runMigrations } from "#db/migrate";
 
 /**
@@ -45,9 +45,9 @@ async function buildServer() {
   await registerPlugins(server);
   console.log("Plugins done, registering routes…");
   await registerRoutes(server);
-  console.log("Routes done, scheduling cron jobs…");
-  await initializeJobs(server);
-  console.log("Jobs done, starting server…");
+  // console.log("Routes done, scheduling cron jobs…");
+  // await initializeJobs(server);
+  // console.log("Jobs done, starting server…");
 
   return server;
 }

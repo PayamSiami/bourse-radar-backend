@@ -10,20 +10,31 @@ import { logger } from "#utils/logger";
 export async function registerSwagger(server: FastifyInstance) {
   await server.register(fastifySwagger, {
     mode: "dynamic",
-    swagger: {
+    openapi: {
+      // ✅ Change to openapi
       info: {
         title: "Bourse Radar API",
         description:
-          "Quantitative Tehran Stock Exchange ranking engine. " +
-          "NOT investment advice.",
+          "Quantitative Tehran Stock Exchange ranking engine. NOT investment advice.",
         version: "0.1.0",
-        contact: {
-          name: "Bourse Radar",
-          url: "https://bourse-radar.ir",
+      },
+      servers: [{ url: "http://localhost:8001" }], // OpenAPI 3 uses servers
+      components: {
+        securitySchemes: {
+          bearerAuth: {
+            // ✅ Define JWT Bearer here
+            type: "http",
+            scheme: "bearer",
+            bearerFormat: "JWT",
+          },
+          apiKey: {
+            // Your original API Key can also be kept
+            type: "apiKey",
+            name: "X-API-Key",
+            in: "header",
+          },
         },
       },
-      host: "localhost:8001",
-      schemes: ["http"],
     },
   });
 

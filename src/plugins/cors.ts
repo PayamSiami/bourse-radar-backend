@@ -18,7 +18,7 @@ export async function registerCors(server: FastifyInstance) {
           : ["https://bourse-radar.ir", "https://www.bourse-radar.ir"]
         : true, // Allow all in development
     credentials: true,
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "PUT"],
   });
   logger.info("✓ CORS registered");
 }

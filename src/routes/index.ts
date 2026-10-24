@@ -12,6 +12,8 @@ import { registerQuarterlyRoutes } from "#routes/quarterly";
 import { registerEarningsRoutes } from "#routes/earnings";
 import { registerMcapRoutes } from "#routes/mcap-series";
 import { registerOrderBookRoutes } from "#routes/orderbook";
+import { registerTicketsRoutes } from "#routes/tickets";
+import { registerAuthRoutes } from "#routes/auth";
 
 type RouteRegistrar = (server: FastifyInstance) => void | Promise<void>;
 
@@ -38,6 +40,10 @@ export async function registerRoutes(server: FastifyInstance) {
     {
       name: "Health",
       register: (s) => registerHealthRoute(s),
+    },
+    {
+      name: "Auth",
+      register: (s) => registerAuthRoutes(s, "/api/auth"),
     },
     {
       name: "Stocks",
@@ -96,6 +102,11 @@ export async function registerRoutes(server: FastifyInstance) {
     {
       name: "Order book",
       register: (s) => registerOrderBookRoutes(s, "/api/orderbook"),
+      optional: true,
+    },
+    {
+      name: "Tickets",
+      register: (s) => registerTicketsRoutes(s, "/api/tickets"),
       optional: true,
     },
   ];
