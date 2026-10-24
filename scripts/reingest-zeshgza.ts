@@ -10,7 +10,7 @@ async function main() {
 
   try {
     const result = await sql`
-      DELETE FROM forward_pe WHERE symbol = 'زشگزا'
+      SELECT * FROM quarterly_financials WHERE symbol = 'شاراک';
     `;
     console.log(JSON.stringify(result));
   } finally {
@@ -21,6 +21,8 @@ async function main() {
 main().catch((err) => {
   console.error(err);
 });
+//  npx tsx scripts/reingest-zeshgza.ts 
+
 // DELETE FROM quarterly_financials;
 // DELETE FROM forward_pe;
 // DELETE FROM stocks;
@@ -41,3 +43,5 @@ main().catch((err) => {
 // FROM quarterly_financials
 // WHERE symbol = 'زشگزا'
 // ORDER BY period_end DESC;
+
+// SELECT * FROM quarterly_financials WHERE symbol = 'شاراک' ORDER BY period_end DESC LIMIT 5;

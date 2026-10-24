@@ -13,7 +13,7 @@ import Fastify from "fastify";
 import { config } from "#config";
 import { registerPlugins } from "#plugins/index";
 import { registerRoutes } from "#routes/index";
-// import { initializeJobs } from "#jobs/index";
+import { initializeJobs } from "#jobs/index";
 import { runMigrations } from "#db/migrate";
 
 /**
@@ -46,7 +46,7 @@ async function buildServer() {
   console.log("Plugins done, registering routes…");
   await registerRoutes(server);
   // console.log("Routes done, scheduling cron jobs…");
-  // await initializeJobs(server);
+  await initializeJobs(server);
   // console.log("Jobs done, starting server…");
 
   return server;
@@ -61,8 +61,7 @@ async function main() {
       await runMigrations();
       break;
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : String(err);
+      const msg = err instanceof Error ? err.message : String(err);
       if (attempt === maxAttempts) {
         console.warn(
           `[migrate] failed after ${maxAttempts} attempts — starting without migrations: ${msg}`,

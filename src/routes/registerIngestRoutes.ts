@@ -230,7 +230,7 @@ export function registerIngestRoutes(server: FastifyInstance): void {
         description:
           "Single TSE symbol. Triggers archive mode for one symbol. " +
           "URL-encoded (e.g. `%D9%81%D8%B3%D8%A8%D8%B2%D9%88%D8%A7%D8%B1` for فسبزوار).",
-        examples: ["فسبزوار"],
+        examples: [""],
       },
       symbols: {
         type: "string",
@@ -532,7 +532,6 @@ export function registerIngestRoutes(server: FastifyInstance): void {
   );
 
   // ── P/E recomputation ────────────────────────────────────────
-
   server.get(
     "/api/admin/ingest/pe",
     {
@@ -847,7 +846,7 @@ export function registerIngestRoutes(server: FastifyInstance): void {
             symbol: {
               type: "string",
               description: "TSE symbol, URL-encoded.",
-              examples: ["فسبزوار"],
+              examples: [""],
             },
           },
         },

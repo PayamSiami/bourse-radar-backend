@@ -20,7 +20,7 @@ import {
 
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { jalaliToGregorian, toIsoDate } from "#utils/jalali";
+import { gregorianToJalali, jalaliToGregorian, toIsoDate } from "#utils/jalali";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36";
@@ -80,7 +80,7 @@ export class CodalHttpError extends Error {
   getHumanMessage(): string {
     const timeStr = new Date(this.timestamp).toLocaleTimeString();
     if (this.status >= 429) {
-      return `Codal rate limited at ${timeStr}. ${this.retryAfterMs ? `Try again in ${this.retryAfterMs / 1000}s` : 'Wait before retrying'}.`;
+      return `Codal rate limited at ${timeStr}. ${this.retryAfterMs ? `Try again in ${this.retryAfterMs / 1000}s` : "Wait before retrying"}.`;
     }
     return `Codal {${this.source}} failed at ${timeStr}: ${this.message} (HTTP ${this.status})`;
   }
@@ -1132,9 +1132,7 @@ export function extractIncomeStatement(
     if (values.every((v) => v === null)) continue;
 
     // ---- Skip cost / expense rows first ----
-    if (
-      /بهای تمام شده|بهاى تمام شده|بهاي تمام شده|هزینه|هزينه/.test(label)
-    ) {
+    if (/بهای تمام شده|بهاى تمام شده|بهاي تمام شده|هزینه|هزينه/.test(label)) {
       continue;
     }
 
@@ -1173,10 +1171,7 @@ export function extractIncomeStatement(
     }
 
     // ---- Capital ----
-    if (
-      capitals.length === 0 &&
-      (label === "سرمایه" || label === "سرمايه")
-    ) {
+    if (capitals.length === 0 && (label === "سرمایه" || label === "سرمايه")) {
       capitals = values;
       continue;
     }
@@ -1531,16 +1526,25 @@ export async function fetchLatestQuarterlyFinancials(
   symbol: string,
   maxYear?: number,
 ): Promise<QuarterlyResult | null> {
-  // Search for quarterly reports - we only need the first page
-  // because Codal returns letters newest-first.
-  const letters = await searchLetters(symbol, {
-    LetterType: "6",
-    PageNumber: "1",
-  });
+  const letters: any[] = [];
+  const MAX_PAGES = 10;
 
-  if (!letters || letters.length === 0) return null;
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const pageLetters = await searchLetters(symbol, {
+      LetterType: "6", // Type 6 usually represents periodic financial statements
+      PageNumber: String(page),
+    });
 
-  // Filter out revision/final reports
+    if (!pageLetters || pageLetters.length === 0) break;
+    letters.push(...pageLetters);
+
+    if (pageLetters.length < 20) break;
+  }
+
+  if (letters.length === 0) return null;
+
+  // Filter for financial statements, specifically looking for 6-month reports or general statements,
+  // while excluding revisions and interpretations.
   const filtered = letters.filter(
     (l) =>
       (l.title.includes("صورت") || l.title.includes("مالی")) &&
@@ -1548,37 +1552,56 @@ export async function fetchLatestQuarterlyFinancials(
       !l.title.includes("تفسیری"),
   );
 
-  // Sort by publishDateTime descending (newest first) and reject any that are
-  // older than maxYear (if provided).
-  for (const letter of filtered.sort(
-    (a, b) =>
-      new Date(b.publishDateTime).getTime() -
-      new Date(a.publishDateTime).getTime(),
-  )) {
-    const pubYear = new Date(letter.publishDateTime).getFullYear();
-    if (maxYear != null && pubYear > maxYear) continue;
+  const candidates: Array<{
+    letter: any;
+    pubJalaliYear: number;
+    pubDate: Date;
+  }> = [];
 
+  for (const letter of filtered) {
+    const pubDate = new Date(letter.publishDateTime);
+    const pubJalali = gregorianToJalali(
+      pubDate.getFullYear(),
+      pubDate.getMonth() + 1,
+      pubDate.getDate(),
+    );
+    const pubJalaliYear = pubJalali.jy;
+
+    if (maxYear != null && pubJalaliYear > maxYear) continue;
+
+    candidates.push({ letter, pubJalaliYear, pubDate });
+  }
+
+  if (candidates.length === 0) return null;
+
+  // Sort by publication date descending to target the newest reports first (e.g., 1405)
+  candidates.sort(
+    (a, b) =>
+      b.pubJalaliYear - a.pubJalaliYear ||
+      b.pubDate.getTime() - a.pubDate.getTime(),
+  );
+
+  for (const candidate of candidates) {
     try {
-      const html = await fetchIncomeStatementHtml(letter.url);
+      const html = await fetchIncomeStatementHtml(candidate.letter.url);
       const fin = extractIncomeStatement(html);
+
+      // Optional check to ensure you specifically match the 6-month period ending in Shahrivar (Month 6)
+      // fin.latestPeriod might look like "6 ماهه" or match your target criteria.
       if (fin && fin.latestMargin !== null) {
         return {
           latestPeriod: fin.latestPeriod,
           latestMargin: fin.latestMargin,
           financials: fin,
-          reportUrl: `${CODAL_BASE}${letter.url}`,
+          reportUrl: `${CODAL_BASE}${candidate.letter.url}`,
         };
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      // Log the exact letter that failed, so you can see the URL.
       console.warn(
-        `  [${symbol}] quarterly parse failed (latest only): ${msg.slice(0, 100)} – URL ${CODAL_BASE}${letter.url}`,
+        `  [${symbol}] quarterly parse failed: ${msg.slice(0, 100)} – URL ${CODAL_BASE}${candidate.letter.url}`,
       );
       if (/^Browser unavailable:/.test(msg)) {
-        console.warn(
-          `  [${symbol}] skipping remaining letters – browser cannot launch`,
-        );
         return null;
       }
     }
@@ -1613,28 +1636,47 @@ export async function fetchQuarterlyFinancials(
       !l.title.includes("تفسیری"),
   );
 
-  // Filter by year range (using publishDateTime)
-  for (const letter of filtered) {
-    if (maxYear != null || minYear != null) {
-      try {
-        const pub = new Date(letter.publishDateTime);
-        const yr = pub.getFullYear();
-        if (maxYear != null && yr > maxYear) continue;
-        if (minYear != null && yr < minYear) continue;
-      } catch {
-        // malformed date → keep it, it has a year anyway
-      }
-    }
+  // Convert to candidates with Jalali years and filter by range
+  const candidates: Array<{
+    letter: CodalLetter;
+    pubJalaliYear: number;
+    pubDate: Date;
+  }> = [];
 
+  for (const letter of filtered) {
+    const pubDate = new Date(letter.publishDateTime);
+    const pubJalali = gregorianToJalali(
+      pubDate.getFullYear(),
+      pubDate.getMonth() + 1,
+      pubDate.getDate(),
+    );
+    const pubJalaliYear = pubJalali.jy;
+
+    if (maxYear != null && pubJalaliYear > maxYear) continue;
+    if (minYear != null && pubJalaliYear < minYear) continue;
+
+    candidates.push({ letter, pubJalaliYear, pubDate });
+  }
+
+  if (candidates.length === 0) return null;
+
+  // Sort by publishDate descending (newest first), then by pubJalaliYear descending
+  candidates.sort(
+    (a, b) =>
+      b.pubJalaliYear - a.pubJalaliYear ||
+      b.pubDate.getTime() - a.pubDate.getTime(),
+  );
+
+  for (const candidate of candidates) {
     try {
-      const html = await fetchIncomeStatementHtml(letter.url);
+      const html = await fetchIncomeStatementHtml(candidate.letter.url);
       const fin = extractIncomeStatement(html);
       if (fin && fin.latestMargin !== null) {
         return {
           latestPeriod: fin.latestPeriod,
           latestMargin: fin.latestMargin,
           financials: fin,
-          reportUrl: `${CODAL_BASE}${letter.url}`,
+          reportUrl: `${CODAL_BASE}${candidate.letter.url}`,
         };
       }
     } catch (e: unknown) {
@@ -1644,7 +1686,7 @@ export async function fetchQuarterlyFinancials(
       );
       if (/^Browser unavailable:/.test(msg)) {
         console.warn(
-          `  [${symbol}] skipping remaining ${filtered.length - filtered.indexOf(letter) - 1} letters — browser cannot launch`,
+          `  [${symbol}] skipping remaining ${filtered.length - filtered.indexOf(candidate.letter) - 1} letters — browser cannot launch`,
         );
         return null;
       }
