@@ -1,12 +1,14 @@
 # ─────────────────────────────────────────────────────────────
 # Stage 1: Build TypeScript
 # ─────────────────────────────────────────────────────────────
-FROM node:22-bookworm-slim AS builder
+FROM node:22.16.0-bookworm-slim AS builder
 WORKDIR /app
 
 COPY package.json package-lock.json .npmrc ./
+
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci --no-audit --no-fund
+    npm cache clean --force && \
+    npm ci --no-audit --no-fund --prefer-offline
 
 COPY tsconfig.json ./
 COPY src ./src
@@ -17,7 +19,7 @@ RUN npm run build
 # ─────────────────────────────────────────────────────────────
 # Stage 2: Runtime (slim, no Playwright)
 # ─────────────────────────────────────────────────────────────
-FROM node:22-bookworm-slim AS runner
+FROM node:22.16.0-bookworm-slim AS runner
 WORKDIR /app
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
