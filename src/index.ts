@@ -46,7 +46,7 @@ async function buildServer() {
   console.log("Plugins done, registering routes…");
   await registerRoutes(server);
   // console.log("Routes done, scheduling cron jobs…");
-  await initializeJobs(server);
+  // await initializeJobs(server);
   // console.log("Jobs done, starting server…");
 
   return server;
