@@ -16,11 +16,12 @@ COPY scripts ./scripts
 RUN npm run build
 
 # ─────────────────────────────────────────────────────────────
-# Stage 2: Runtime
+# Stage 2: Runtime (slim, no Playwright browsers)
 # ─────────────────────────────────────────────────────────────
-FROM mcr.microsoft.com/playwright:v1.64.1-noble AS runner
+FROM node:22-bookworm-slim AS runner
 WORKDIR /app
 
+# dumb-init برای مدیریت صحیح سیگنال‌ها به عنوان PID 1
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update \
@@ -28,8 +29,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
  && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production \
-    TZ=Asia/Tehran \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    TZ=Asia/Tehran
 
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
@@ -46,7 +46,6 @@ USER appuser
 
 EXPOSE 8001
 
-# start-period کافی برای migrations (که در main.ts تا ۹۰ ثانیه retry می‌کند)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=5 \
     CMD ["node", "-e", "const h=require('http');h.get('http://127.0.0.1:8001/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
 
