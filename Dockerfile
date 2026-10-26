@@ -4,20 +4,22 @@
 FROM node:22.16.0-bookworm-slim AS builder
 WORKDIR /app
 
-# Install pnpm globally
+# Configure npm to use a fast mirror and set generous timeouts for reliability
+RUN npm config set registry https://registry.npmmirror.com && \
+    npm config set fetch-retries 5 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000
+
+# Install pnpm globally (will use the configured mirror)
 RUN npm install -g pnpm@9
 
-# Environment variables to make npm/pnpm more resilient and less memory-intensive
-ENV NPM_CONFIG_FETCH_TIMEOUT=60000 \
-    NPM_CONFIG_FETCH_RETRIES=2 \
-    NPM_CONFIG_FUND=false \
-    NPM_CONFIG_AUDIT=false \
-    NPM_CONFIG_UPDATE_NOTIFIER=false \
-    NPM_CONFIG_PROGRESS=false
+# Environment variables to make pnpm more resilient
+ENV PNPM_HOME=/root/.local/share/pnpm \
+    PATH=$PNPM_HOME:$PATH
 
 COPY package.json package-lock.json .npmrc ./
 
-# Use pnpm for installation (memory-efficient, avoids npm bug)
+# Use pnpm for installation with a frozen lockfile
 RUN pnpm install --frozen-lockfile
 
 COPY tsconfig.json ./
@@ -40,14 +42,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 ENV NODE_ENV=production TZ=Asia/Tehran
 
-# Copy node_modules from builder (already contains only production deps if you use pnpm's flag)
+# Copy node_modules from builder
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/package-lock.json ./package-lock.json
 COPY --from=builder /app/.npmrc ./.npmrc
 
-# Prune devDependencies using pnpm
-RUN npm install -g pnpm@9 && pnpm prune --prod
+# Install pnpm and prune devDependencies (using the same mirror config)
+RUN npm config set registry https://registry.npmmirror.com && \
+    npm install -g pnpm@9 && \
+    pnpm prune --prod
 
 # Copy compiled output
 COPY --from=builder /app/dist ./dist
