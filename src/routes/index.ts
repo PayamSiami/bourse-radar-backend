@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { registerStocksRoutes } from "#routes/stocks";
 import { registerRankingsRoutes } from "#routes/rankings";
-import { registerSuggestionsRoutes } from "#routes/suggestions";
+import { registerSuggestionsRoutes } from "#routes/suggestions.routes";
 import { registerHealthRoute } from "#routes/health";
 import { registerSalesTrendsRoutes } from "#routes/sales-trends";
 import { registerIngestRoutes } from "#routes/registerIngestRoutes";

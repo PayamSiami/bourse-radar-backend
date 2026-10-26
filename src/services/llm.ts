@@ -11,6 +11,21 @@ import { z } from "zod";
 import { config } from "#config";
 import { logger } from "#utils/logger";
 
+// ──────────────── Types ─────────────────────────────────
+
+export type StockInput = Record<string, unknown>;
+export type SectorAgg = Record<string, unknown>;
+export type SectorAggMap = Map<string, SectorAgg>;
+
+export type NarrativeFallback = {
+  symbol: string;
+  fallback: true;
+  error: string;
+  rawData: StockInput;
+};
+
+export type NarrativeResult = LlmNarrative | NarrativeFallback;
+
 // ──────────────── Zod Schemas (structured output) ────────
 
 export const LlmNarrativeSchema = z.object({
@@ -73,7 +88,7 @@ function extractJson(raw: string): unknown {
   throw new Error(`No JSON found in LLM response: ${raw.slice(0, 200)}`);
 }
 
-// ──────────────── System Prompt (Persian) ─────────────────
+// ──────────────── Prompts ────────────────────────────────
 
 const SYSTEM_PROMPT = `
 شما یک تحلیل‌گر مالی عددی برای بازار سهام ایران (بورس تهران) هستید.
@@ -113,21 +128,33 @@ const USER_PROMPT_TEMPLATE = `
 {{JSON_INPUT}}
 `.trim();
 
+// ──────────────── Config defaults ───────────────────────
+
+const DEFAULT_CONCURRENCY = Number(process.env.LLM_CONCURRENCY ?? 8);
+const DEFAULT_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 20_000);
+
 // ──────────────── LLM Narrator Class ─────────────────────
 
 export class LlmNarrator {
   private client: OpenAI;
   public modelName: string;
+  public concurrency: number;
+  public timeoutMs: number;
 
-  constructor() {
+  constructor(opts?: { concurrency?: number; timeoutMs?: number }) {
     this.client = new OpenAI({
       apiKey: config.llm.apiKey,
       baseURL: config.llm.baseURL,
     });
     this.modelName = config.llm.model;
+    this.concurrency = Math.max(1, opts?.concurrency ?? DEFAULT_CONCURRENCY);
+    this.timeoutMs = Math.max(1000, opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   }
 
-  async generate(stockInput: Record<string, unknown>): Promise<LlmNarrative> {
+  async generate(
+    stockInput: StockInput,
+    signal?: AbortSignal,
+  ): Promise<LlmNarrative> {
     const jsonInput = JSON.stringify(stockInput, null, 2);
     const userPrompt = USER_PROMPT_TEMPLATE.replace(
       "{{RANK}}",
@@ -137,25 +164,26 @@ export class LlmNarrator {
       .replace("{{JSON_INPUT}}", jsonInput);
 
     try {
-      const response = await this.client.chat.completions.create({
-        model: this.modelName,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userPrompt },
-        ],
-        max_tokens: config.llm.maxTokens,
-        temperature: config.llm.temperature,
-        response_format: { type: "json_object" },
-      });
+      const response = await this.client.chat.completions.create(
+        {
+          model: this.modelName,
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            { role: "user", content: userPrompt },
+          ],
+          max_tokens: config.llm.maxTokens,
+          temperature: config.llm.temperature,
+          response_format: { type: "json_object" },
+        },
+        { signal },
+      );
 
       const raw = response.choices[0]?.message?.content;
       if (!raw) throw new Error("Empty LLM response");
 
-      // ← JSON extraction مقاوم
       const parsed = extractJson(raw) as Record<string, unknown>;
 
-      // ← usage را از response بگیر، نه از parsed
-      const result = LlmNarrativeSchema.parse({
+      return LlmNarrativeSchema.parse({
         ...parsed,
         usage: {
           promptTokens: response.usage?.prompt_tokens ?? 0,
@@ -163,8 +191,6 @@ export class LlmNarrator {
           totalTokens: response.usage?.total_tokens ?? 0,
         },
       });
-
-      return result;
     } catch (err) {
       logger.error(
         err,
@@ -175,38 +201,30 @@ export class LlmNarrator {
   }
 
   async generateBatch(
-    stocks: Array<Record<string, unknown>>,
-    sectorAggs?: Map<string, Record<string, unknown>>,
-  ): Promise<
-    Array<
-      | LlmNarrative
-      | {
-          symbol: string;
-          fallback: true;
-          error: string;
-          rawData: Record<string, unknown>;
-        }
-    >
-  > {
-    // ── concurrency limit: 2 هم‌زمان (جلوگیری از timeout) ──
-    const CONCURRENCY = 2;
+    stocks: StockInput[],
+    sectorAggs?: SectorAggMap,
+    signal?: AbortSignal,
+  ): Promise<NarrativeResult[]> {
+    const CONCURRENCY = Math.min(this.concurrency, stocks.length);
     const results: Array<PromiseSettledResult<LlmNarrative>> = new Array(
       stocks.length,
     );
     let cursor = 0;
+    const self = this;
 
     async function worker() {
       while (true) {
+        if (signal?.aborted) return;
         const i = cursor++;
         if (i >= stocks.length) return;
         const stock = stocks[i];
         if (!stock) continue;
-        const input = {
-          ...stock,
-          sectorContext: sectorAggs?.get(stock["sector"] as string),
-        };
+
+        // ← استفاده از buildLlmInput: ورودی غنی به LLM
+        const input = buildLlmInput(stock, sectorAggs);
+
         try {
-          const value = await self.generate(input);
+          const value = await self.generate(input, signal);
           results[i] = { status: "fulfilled", value };
         } catch (reason) {
           results[i] = { status: "rejected", reason };
@@ -214,12 +232,7 @@ export class LlmNarrator {
       }
     }
 
-    const self = this;
-    await Promise.all(
-      Array.from({ length: Math.min(CONCURRENCY, stocks.length) }, () =>
-        worker(),
-      ),
-    );
+    await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
 
     return results.map((r, i) => {
       if (r?.status === "fulfilled") return r.value;
@@ -231,7 +244,9 @@ export class LlmNarrator {
           ? r.reason instanceof Error
             ? r.reason.message
             : String(r.reason)
-          : "unknown error";
+          : signal?.aborted
+            ? "aborted"
+            : "unknown error";
 
       logger.warn(`LLM failed for ${symbol}, returning fallback: ${error}`);
 
@@ -248,9 +263,9 @@ export class LlmNarrator {
 // ──────────────── LLM Input Builder ──────────────────────
 
 export function buildLlmInput(
-  row: Record<string, unknown>,
-  sectorAggs?: Map<string, Record<string, unknown>>,
-): Record<string, unknown> {
+  row: StockInput,
+  sectorAggs?: SectorAggMap,
+): StockInput {
   const calcDetails = (row["calcDetails"] as Record<string, unknown>) || {};
   const sector = row["sector"] as string;
   const sectorAgg = sectorAggs?.get(sector);
