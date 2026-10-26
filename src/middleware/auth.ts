@@ -5,7 +5,11 @@ import { logger } from "#utils/logger";
 
 declare module "fastify" {
   interface FastifyRequest {
-    user?: { id: number; email: string };
+    user?: {
+      id: number;
+      email: string;
+      is_admin?: boolean;
+    };
   }
 }
 
@@ -16,7 +20,7 @@ if (!JWT_SECRET_ENV) {
 // Now JWT_SECRET_ENV is narrowed to `string`
 const JWT_SECRET: string = JWT_SECRET_ENV;
 
-type JwtPayload = { sub?: number | string; id?: number; email: string };
+type JwtPayload = { sub?: number | string; id?: number; email: string; is_admin?: boolean };
 
 export function createAuthMiddleware(server: FastifyInstance) {
   // ✅ async, NO `done`
@@ -66,7 +70,11 @@ export function createAuthMiddleware(server: FastifyInstance) {
         .send({ success: false, error: "کاربر یافت نشد" });
     }
 
-    request.user = { id: user.id, email: user.email };
+    request.user = { 
+      id: user.id, 
+      email: user.email,
+      is_admin: (user as any).is_admin ?? false
+    };
     // ✅ no done() — returning normally signals success
   };
 }

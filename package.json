@@ -15,7 +15,9 @@
     "#routes/*": "./dist/routes/*.js",
     "#plugins/*": "./dist/plugins/*.js",
     "#jobs/*": "./dist/jobs/*.js",
-    "#migrations/*": "./dist/migrations/*.js"
+    "#migrations/*": "./dist/migrations/*.js",
+    "#middleware/*": "./dist/middleware/*.js",
+    "#errors": "./dist/errors.js"
   },
   "engines": {
     "node": ">=20.0.0"

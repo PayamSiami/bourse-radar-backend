@@ -23,10 +23,6 @@ import {
 
 const TZ = "Asia/Tehran";
 
-// Read MAX_YEAR/MIN_YEAR from .env (Persion years, default Undefined)
-const MAX_YEAR = Number(process.env.MAX_YEAR) || undefined;
-const MIN_YEAR = Number(process.env.MIN_YEAR) || undefined;
-
 interface JobConfig {
   name: string;
   schedule: string;
@@ -100,8 +96,7 @@ export async function initializeJobs(server: FastifyInstance): Promise<void> {
       schedule: "0 15 * * 0-4",
       task: async () => {
         logger.info("[job] ingesting quarterly financials (Playwright)");
-        const n = await syncQuarterlyFinancials(server.db, symbols, MIN_YEAR, MAX_YEAR);
-        logger.info(`[job] synced ${n} quarterly records (minYear=${MIN_YEAR}, maxYear=${MAX_YEAR})`);
+        const n = await syncQuarterlyFinancials(server.db, symbols);
       },
     },
 

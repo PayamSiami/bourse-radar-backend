@@ -34,6 +34,8 @@ export interface User {
   emailVerifiedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
+  is_admin?: boolean;
+  passwordHash?: string;
 }
 
 export class UserService {
@@ -360,6 +362,7 @@ export class UserService {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       passwordHash: row.password_hash,
+      is_admin: row.is_admin ?? false,
     };
   }
 

@@ -12,7 +12,7 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "noUnusedLocals": true,
-    "noUnusedParameters": true, // or false — be consistent
+    "noUnusedParameters": true,
 
     "noEmitOnError": true,
     "resolveJsonModule": true,
@@ -28,7 +28,9 @@
       "#services/*": ["./src/services/*.ts"],
       "#routes/*": ["./src/routes/*.ts"],
       "#plugins/*": ["./src/plugins/*.ts"],
-      "#jobs/*": ["./src/jobs/*.ts"]
+      "#jobs/*": ["./src/jobs/*.ts"],
+      "#middleware/*": ["./src/middleware/*.ts"],
+      "#errors": ["./src/errors.ts"]
     },
 
     "skipLibCheck": true,

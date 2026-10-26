@@ -14,6 +14,7 @@ import { registerMcapRoutes } from "#routes/mcap-series";
 import { registerOrderBookRoutes } from "#routes/orderbook";
 import { registerTicketsRoutes } from "#routes/tickets";
 import { registerAuthRoutes } from "#routes/auth";
+import { registerAdminRoutes } from "#routes/admin";
 
 type RouteRegistrar = (server: FastifyInstance) => void | Promise<void>;
 
@@ -44,6 +45,11 @@ export async function registerRoutes(server: FastifyInstance) {
     {
       name: "Auth",
       register: (s) => registerAuthRoutes(s, "/api/auth"),
+    },
+    {
+      name: "Admin",
+      register: (s) => registerAdminRoutes(s),
+      optional: true,
     },
     {
       name: "Stocks",
