@@ -206,7 +206,9 @@ export class AdminService {
       const result = await this.sql`
         DELETE FROM users WHERE id = ${id}
       `;
-
+      if (result.length === 0) {
+        throw new Error("کاربر یافت نشد");
+      }
       logger.info(`User deleted: ${id}`);
     } catch (error) {
       logger.error(error, `Failed to delete user: ${id}`);

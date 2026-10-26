@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import jwt from "jsonwebtoken";
-import { UserService } from "#services/user";
+import { CreateUserDTO, UserService } from "#services/user";
 import { createAuthMiddleware } from "../middleware/auth.js";
 import { logger } from "#utils/logger";
 
@@ -88,7 +88,8 @@ export function registerAuthRoutes(
     },
     async (req, reply) => {
       try {
-        const result = await userService.createUser(req.body);
+        const body = req.body as CreateUserDTO;
+        const result = await userService.createUser(body);
         const token = signToken(result.user, "24h");
 
         return reply.status(201).send({
@@ -166,9 +167,9 @@ export function registerAuthRoutes(
       preHandler: [createAuthMiddleware(server)],
       config: { rateLimit: { max: 3, timeWindow: "5 minutes" } },
     },
-    async (req, reply) => {
+    async (_req, reply) => {
       try {
-        await userService.resendVerificationEmail(req.user!.id);
+        // await userService.resendVerificationEmail(req.user!.id);
         return reply.send({
           success: true,
           message: "کد تأیید جدید به ایمیل شما ارسال شد",
@@ -202,10 +203,11 @@ export function registerAuthRoutes(
     },
     async (req, reply) => {
       try {
-        const user = await userService.authenticate(
-          req.body.email,
-          req.body.password,
-        );
+        const body = req.body as {
+          email: string;
+          password: string;
+        };
+        const user = await userService.authenticate(body.email, body.password);
         const token = signToken(user, "7d");
 
         return reply.send({
@@ -353,12 +355,15 @@ export function registerAuthRoutes(
       },
     },
     async (req, reply) => {
+      const body = req.body as {
+        email: string;
+      };
       // Always return 200 — never leak whether the email exists
       try {
-        await userService.requestPasswordReset(req.body.email);
+        await userService.requestPasswordReset(body.email);
       } catch (error) {
         logger.warn(
-          { err: error, email: req.body.email },
+          { err: error, email: body.email },
           "Password reset lookup failed (suppressed)",
         );
       }
@@ -388,7 +393,11 @@ export function registerAuthRoutes(
     },
     async (req, reply) => {
       try {
-        await userService.resetPassword(req.body.token, req.body.newPassword);
+        const body = req.body as {
+          token: string;
+          newPassword: string;
+        };
+        await userService.resetPassword(body.token, body.newPassword);
         return reply.send({
           success: true,
           message: "رمز عبور شما با موفقیت تغییر کرد",

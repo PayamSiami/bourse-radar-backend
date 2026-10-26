@@ -97,6 +97,7 @@ export async function initializeJobs(server: FastifyInstance): Promise<void> {
       task: async () => {
         logger.info("[job] ingesting quarterly financials (Playwright)");
         const n = await syncQuarterlyFinancials(server.db, symbols);
+        logger.info(`[job] computed Forward P/E for ${n} stocks`);
       },
     },
 

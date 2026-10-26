@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import postgres from "postgres";
-// import { emailService } from "./email.js";
+import { emailService } from "./email.js";
 import { ConflictError, ValidationError } from "../errors.js";
 import { logger } from "../utils/logger.js";
 
@@ -78,11 +78,11 @@ export class UserService {
       user = this.mapToUser(result[0]);
 
       // Send verification email
-      // await emailService.sendVerificationEmail(
-      //   user.email,
-      //   token,
-      //   user.username || user.displayName,
-      // );
+      await emailService.sendVerificationEmail(
+        user.email,
+        token,
+        user.username || user.displayName,
+      );
     } catch (err: any) {
       // 23505 = unique_violation
       if (err?.code === "23505") {
@@ -121,6 +121,10 @@ export class UserService {
       }
 
       const authToken = tokenResult[0];
+
+      if (!authToken) {
+        throw new Error("لینک بازیابی معتبر نیست یا منقضی شده است");
+      }
 
       // Get user
       const userResult = await this.sql`
@@ -192,31 +196,33 @@ export class UserService {
 
   async updateProfile(userId: number, updates: Partial<User>): Promise<User> {
     try {
-      const allowedFields = [
-        "username",
-        "display_name",
-        "avatar_url",
-        "phone",
-        "country",
-        "city",
-      ] as const;
+      // API field (camelCase) -> DB column (snake_case)
+      const fieldMap = {
+        username: "username",
+        displayName: "display_name",
+        avatarUrl: "avatar_url",
+        phone: "phone",
+        country: "country",
+        city: "city",
+      } as const;
 
-      // 1) Whitelist allowed keys and coerce empty strings to null
       const patch: Record<string, string | null> = {};
-      for (const key of allowedFields) {
-        if (updates[key] === undefined) continue;
-        const value = updates[key];
-        patch[key] =
+      for (const [apiKey, column] of Object.entries(fieldMap) as [
+        keyof typeof fieldMap,
+        string,
+      ][]) {
+        const value = updates[apiKey];
+        if (value === undefined) continue;
+        patch[column] =
           typeof value === "string" && value.trim() === ""
             ? null
             : (value ?? null);
       }
 
       if (Object.keys(patch).length === 0) {
-        throw new Error("هیچ داده‌ای برای آپدیت وجود ندارد");
+        throw new ValidationError("هیچ داده‌ای برای آپدیت وجود ندارد");
       }
 
-      // 2) Let postgres.js build "col = $n, ..." from the object
       const result = await this.sql`
       UPDATE users
       SET ${this.sql(patch)}, updated_at = NOW()
@@ -226,11 +232,12 @@ export class UserService {
                 created_at, updated_at
     `;
 
-      if (!result || result.length === 0) {
+      const row = result?.[0];
+      if (!row) {
         throw new Error("کاربر یافت نشد");
       }
 
-      const updatedUser = this.mapToUser(result[0]);
+      const updatedUser = this.mapToUser(row);
       logger.info(`Profile updated for user: ${updatedUser.email}`);
       return updatedUser;
     } catch (error) {
@@ -240,53 +247,59 @@ export class UserService {
   }
 
   async resetPassword(token: string, newPassword: string): Promise<User> {
+    if (!newPassword || newPassword.length < 8) {
+      throw new ValidationError("رمز عبور باید حداقل ۸ کاراکتر باشد");
+    }
+
     try {
-      // Find password reset token
-      const tokenResult = await this.sql`
-        SELECT * FROM auth_tokens 
-        WHERE token = ${token} 
+      const passwordHash = await bcrypt.hash(newPassword, 12);
+
+      const result = await this.sql.begin(async (tx) => {
+        // Lock the token row so it can't be consumed twice concurrently
+        const tokenResult = await tx`
+        SELECT * FROM auth_tokens
+        WHERE token = ${token}
           AND type = 'password_reset'
           AND expires_at > NOW()
           AND used_at IS NULL
+        FOR UPDATE
       `;
 
-      if (!tokenResult || tokenResult.length === 0) {
-        throw new Error("لینک بازیابی معتبر نیست یا منقضی شده است");
-      }
+        if (!tokenResult || tokenResult.length === 0) {
+          throw new Error("لینک بازیابی معتبر نیست یا منقضی شده است");
+        }
 
-      const authToken = tokenResult[0];
+        const authToken = tokenResult[0];
 
-      // Get user
-      const userResult = await this.sql`
-        SELECT * FROM users WHERE id = ${authToken.user_id}
-      `;
+        if (!authToken) {
+          throw new Error("لینک بازیابی معتبر نیست یا منقضی شده است");
+        }
 
-      if (!userResult || userResult.length === 0) {
-        throw new Error("کاربر یافت نشد");
-      }
-
-      // Hash new password
-      const saltRounds = 12;
-      const passwordHash = await bcrypt.hash(newPassword, saltRounds);
-
-      // Update password
-      await this.sql`
-        UPDATE users 
+        const updatedUsers = await tx`
+        UPDATE users
         SET password_hash = ${passwordHash}, updated_at = NOW()
         WHERE id = ${authToken.user_id}
+        RETURNING id, email, username, display_name, avatar_url, phone,
+                  country, city, verified, email_verified_at,
+                  created_at, updated_at
       `;
 
-      // Mark token as used
-      await this.sql`
-        UPDATE auth_tokens 
+        if (!updatedUsers || updatedUsers.length === 0) {
+          throw new Error("کاربر یافت نشد");
+        }
+
+        await tx`
+        UPDATE auth_tokens
         SET used_at = NOW()
         WHERE id = ${authToken.id}
       `;
 
-      logger.info(`Password reset for user ID: ${authToken.user_id}`);
+        return updatedUsers[0];
+      });
 
-      // Return user without sending email (password already changed)
-      return this.mapToUser(userResult[0]);
+      const user = this.mapToUser(result);
+      logger.info(`Password reset for user ID: ${user.id}`);
+      return user;
     } catch (error) {
       logger.error(error, "Failed to reset password");
       throw error;
@@ -327,7 +340,7 @@ export class UserService {
   async authenticate(email: string, password: string): Promise<User> {
     try {
       const user = await this.findByEmail(email);
-      if (!user) {
+      if (!user || !user.passwordHash) {
         throw new Error("ایمیل یا رمز عبور اشتباه است");
       }
 
@@ -336,9 +349,9 @@ export class UserService {
         throw new Error("ایمیل یا رمز عبور اشتباه است");
       }
 
-      // if (!user.verified) {
-      //   throw new Error("لطفاً ابتدا ایمیل خود را تأیید کنید");
-      // }
+      if (!user.verified) {
+        throw new Error("لطفاً ابتدا ایمیل خود را تأیید کنید");
+      }
 
       return user;
     } catch (error) {
@@ -364,10 +377,5 @@ export class UserService {
       passwordHash: row.password_hash,
       is_admin: row.is_admin ?? false,
     };
-  }
-
-  private async emailExists(email: string): Promise<boolean> {
-    const result = await this.sql`SELECT id FROM users WHERE email = ${email}`;
-    return result.length > 0;
   }
 }
