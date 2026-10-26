@@ -12,21 +12,6 @@ export async function registerAdminRoutes(server: FastifyInstance) {
     "/api/admin/users",
     {
       preHandler: [authMiddlewareHandler, adminMiddleware],
-      schema: {
-        tags: ["admin"],
-        summary: "???? ???????",
-        querystring: {
-          type: "object",
-          properties: {
-            page: { type: "number", default: 1 },
-            pageSize: { type: "number", default: 20 },
-            search: { type: "string" },
-            is_admin: { type: "boolean" },
-            verified: { type: "boolean" },
-          },
-        },
-        response: { 200: { type: "object", properties: { users: { type: "array", items: { type: "object" } }, total: { type: "number" }, page: { type: "number" }, pageSize: { type: "number" }, totalPages: { type: "number" } } } },
-      },
     },
     async (req: FastifyRequest, reply: FastifyReply) => {
       try {
@@ -46,7 +31,6 @@ export async function registerAdminRoutes(server: FastifyInstance) {
     "/api/admin/users/:id",
     {
       preHandler: [authMiddlewareHandler, adminMiddleware],
-      schema: { tags: ["admin"], summary: "?????? ?????", params: { type: "object", properties: { id: { type: "string" } } } },
     },
     async (req: FastifyRequest, reply: FastifyReply) => {
       try {
@@ -66,7 +50,6 @@ export async function registerAdminRoutes(server: FastifyInstance) {
     "/api/admin/users/:id/role",
     {
       preHandler: [authMiddlewareHandler, adminMiddleware],
-      schema: { tags: ["admin"], summary: "????? ??? ?????", params: { type: "object", properties: { id: { type: "string" } } }, body: { type: "object", properties: { is_admin: { type: "boolean" } } } },
     },
     async (req: FastifyRequest, reply: FastifyReply) => {
       try {
@@ -87,8 +70,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
     "/api/admin/users/:id",
     {
       preHandler: [authMiddlewareHandler, adminMiddleware],
-      schema: { tags: ["admin"], summary: "??? ?????", params: { type: "object", properties: { id: { type: "string" } } } },
-    },
+      },
     async (req: FastifyRequest, reply: FastifyReply) => {
       try {
         const userId = parseInt((req.params as any).id, 10);
@@ -106,8 +88,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
     "/api/admin/tickets",
     {
       preHandler: [authMiddlewareHandler, adminMiddleware],
-      schema: { tags: ["admin"], summary: "???? ???????", querystring: { type: "object", properties: { page: { type: "number", default: 1 }, pageSize: { type: "number", default: 20 }, status: { type: "string" }, userId: { type: "number" }, search: { type: "string" } } } },
-    },
+       },
     async (req: FastifyRequest, reply: FastifyReply) => {
       try {
         const query = req.query as any;
@@ -126,8 +107,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
     "/api/admin/tickets/:id",
     {
       preHandler: [authMiddlewareHandler, adminMiddleware],
-      schema: { tags: ["admin"], summary: "?????? ????", params: { type: "object", properties: { id: { type: "string" } } } },
-    },
+      },
     async (req: FastifyRequest, reply: FastifyReply) => {
       try {
         const ticketId = parseInt((req.params as any).id, 10);
