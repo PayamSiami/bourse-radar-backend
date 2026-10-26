@@ -54,6 +54,7 @@ export const WATCHLIST: Array<WatchlistItem> = [
   { sym: "فوکا", name: "فولاد کاویان", type: "general" },
   { sym: "فسرب", name: "ملی سرب و روی", type: "general" },
   { sym: "فسوژ", name: "سوژمیران", type: "general" },
+  { sym: "فباهنر", name: "صنایع مس شهید باهنر", type: "general" },
 
   { sym: "فسبزوار", name: "پارس فولاد سبزوار", type: "general" },
   { sym: "فاسمین", name: "کالسیمین", type: "general" },
@@ -153,6 +154,7 @@ export const WATCHLIST: Array<WatchlistItem> = [
   { sym: "وغدیر", name: "سرمایه‌گذاری غدیر", type: "holding" },
   { sym: "وامید", name: "سرمایه‌گذاری امید", type: "holding" },
   { sym: "وصندوق", name: "سرمایه‌گذاری صندوق بازنشستگی", type: "holding" },
+  { sym: "تاصیکو", name: "سرمایه‌گذاری صدر تامین", type: "holding" },
 ];
 
 /** چک سریع عضویت نماد در واچ‌لیست */
