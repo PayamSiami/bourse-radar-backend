@@ -4,7 +4,7 @@
 FROM node:22-bookworm-slim AS builder
 WORKDIR /app
 
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json .npmrc ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --no-audit --no-fund
 
@@ -12,29 +12,30 @@ COPY tsconfig.json ./
 COPY src ./src
 COPY migrations ./migrations
 COPY scripts ./scripts
-
 RUN npm run build
 
 # ─────────────────────────────────────────────────────────────
-# Stage 2: Runtime (slim, no Playwright browsers)
+# Stage 2: Runtime (slim, no Playwright)
 # ─────────────────────────────────────────────────────────────
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app
 
-# dumb-init برای مدیریت صحیح سیگنال‌ها به عنوان PID 1
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update \
  && apt-get install -y --no-install-recommends dumb-init \
  && rm -rf /var/lib/apt/lists/*
 
-ENV NODE_ENV=production \
-    TZ=Asia/Tehran
+ENV NODE_ENV=production TZ=Asia/Tehran
 
-COPY package.json package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci --omit=dev --no-audit --no-fund
+# کپی node_modules از builder و حذف devDependencies
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/package-lock.json ./package-lock.json
+COPY --from=builder /app/.npmrc ./.npmrc
+RUN npm prune --omit=dev --no-audit --no-fund
 
+# کپی خروجی کامپایل‌شده
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/migrations ./migrations
 COPY --from=builder /app/scripts ./scripts
