@@ -93,6 +93,9 @@ export const WATCHLIST: Array<WatchlistItem> = [
   { sym: "پتایر", name: "ایران تایر", type: "general" },
   { sym: "پاسا", name: "ایران یاسا تایر", type: "general" },
 
+  // // ── لاستیک (Tires) ──────────────────────────────────
+  { sym: "پیزد", name: "مجتمع صنایع لاستیک یزد", type: "general" },
+
   // // ── دارویی (Pharmaceuticals) ────────────────────────
   { sym: "برکت", name: "گروه دارویی برکت", type: "general" },
   { sym: "دتولید", name: "داروسازی تولید دارو", type: "general" },
