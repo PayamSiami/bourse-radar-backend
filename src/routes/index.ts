@@ -4,7 +4,7 @@ import { registerRankingsRoutes } from "#routes/rankings";
 import { registerSuggestionsRoutes } from "#routes/suggestions.routes";
 import { registerHealthRoute } from "#routes/health";
 import { registerSalesTrendsRoutes } from "#routes/sales-trends";
-import { registerIngestRoutes } from "#routes/registerIngestRoutes";
+import { registerIngestRoutes } from "#routes/registerIngest.routes";
 import { registerSectorAssetsRoutes } from "#routes/sector-assets";
 import { registerSectorsRoutes } from "#routes/sectors";
 import { registerPriceHistoryRoutes } from "#routes/price-history";
