@@ -9,16 +9,9 @@
  *   This module talks to any OpenAI-compatible chat-completions endpoint.
  *   Configure via env: LLM_BASE_URL, LLM_API_KEY, LLM_MODEL.
  *
- *   Do NOT point this at OpenCode's free tier — it is gated to the official
- *   OpenCode client and returns 403 regardless of transport. Use a paid
- *   provider (OpenAI, OpenRouter, DeepSeek, etc.).
- *
  * TIMEOUT NOTE:
- *   The OpenAI SDK's `timeout` option only covers time-to-first-byte
- *   (response headers). Once headers arrive, the SDK clears its timer and
- *   the body read has NO timeout. To protect against provider stalls we wrap
- *   every request in a hard-deadline `Promise.race` AND pass an
- *   AbortController so the underlying fetch is actually cancelled.
+ *   The OpenAI SDK's `timeout` option only covers time-to-first-byte.
+ *   We wrap every request in a hard-deadline Promise.race + AbortController.
  */
 
 import OpenAI from "openai";
@@ -41,7 +34,7 @@ export type NarrativeFallback = {
 
 export type NarrativeResult = LlmNarrative | NarrativeFallback;
 
-// ──────────────── Zod Schemas (structured output) ────────
+// ──────────────── Zod Schemas ────────────────────────────
 
 export const LlmNarrativeSchema = z.object({
   headline: z.string().max(140).default("تحلیل عددی"),
@@ -62,19 +55,33 @@ export const LlmNarrativeSchema = z.object({
     })
     .default({ promptTokens: 0, completionTokens: 0, totalTokens: 0 }),
 
-  trendDirection: z.enum(["up", "down", "neutral"]).default("neutral"),
-  trendArrow: z.string().default("→"),
-  confidenceScore: z.number().min(0).max(100).default(50),
-  trendHorizon: z.enum(["1d", "1w", "1m"]).default("1w"),
+  // New fields - use optional to avoid failures if LLM doesn't return them
+  trendDirection: z
+    .enum(["up", "down", "neutral"])
+    .optional()
+    .default("neutral"),
+  trendArrow: z.string().optional().default("→"),
+  confidenceScore: z
+    .number()
+    .min(0)
+    .max(100)
+    .refine((v) => !isNaN(v), "Confidence must be a number")
+    .default(50),
+  trendHorizon: z.enum(["1d", "1w", "1m"]).optional().default("1w"),
   nearTermOutlook: z
     .string()
     .max(500)
+    .optional()
     .default("چشم‌انداز کوتاه‌مدت نامشخص است."),
   predictionBasis: z
     .string()
     .max(300)
-    .default("بر اساس الگوهای تاریخی و تحلیل کمی"),
-  volatilityRisk: z.enum(["low", "medium", "high"]).default("medium"),
+    .optional()
+    .default("بر اساس داده‌های عددی"),
+  volatilityRisk: z
+    .enum(["low", "medium", "high"])
+    .optional()
+    .default("medium"),
 });
 
 export type LlmNarrative = z.infer<typeof LlmNarrativeSchema>;
@@ -113,74 +120,53 @@ function extractJson(raw: string): unknown {
 // ──────────────── Prompts ────────────────────────────────
 
 const SYSTEM_PROMPT = `
-شما یک تحلیل‌گر مالی عددی برای بازار سهام ایران (بورس تهران) هستید.
-وظیفه شما تبیین این است که چرا یک سهم در رتبه خاصی قرار دارد — نه اینکه بگویید بخرید یا بفروشید.
+تحلیل‌گر عددی بورس تهران هستی.
+فقط از داده‌های داده‌شده استفاده کن.
+هیچ توصیه خرید/فروش نده.
+فقط JSON معتبر برگردان.
 
-قوانین سخت‌گیرانه:
-1. فقط از داده‌های عددی ارائه‌شده در JSON استفاده کنید. هیچ حدسی نزنید.
-2. اگر Forward P/E یا EPS غیرقابل محاسبه است، صراحتاً بگویید "قابل محاسبه نیست."
-3. اگر شاخص‌های قیمتی روشن هستند، روند کوتاه‌مدت را با دقت بالا توصیف کنید.
-4. همیشه منبع داده و سطح اطمینان را اعلام کنید.
-5. در انتهای هر تحلیل، بیانیه عدم‌اعتماد را گنجانید: "این یک برآورد عددی است، نه مشاوره سرمایه‌گذاری."
-6. اگر حاشیه سود از میانگین صنعتی بود (نه از صورت مالی شرکت)، این را صراحتاً بگویید.
-7. اگر شرکت بانکی، بیمه‌ای یا سرمایه‌گذاری است، نوع مالی خاص آن را اعلام کنید.
-8. از اصطلاحات "خرید"، "فروش"، "هدف قیمت"، "پیشنهاد خرید" استفاده نکنید.
-
-⚠️ خروجی شما باید **فقط** یک آبجکت JSON معتبر باشد، بدون هیچ متن اضافه، بدون markdown، بدون توضیح.
-ساختار دقیق JSON:
+ساختار:
 {
-  "headline": "عنوان کوتاه حداکثر ۱۴۰ کاراکتر",
-  "analysis": "تحلیل ۲-۳ پاراگرافی حداکثر ۲۰۰۰ کاراکتر",
-  "quantitativeReasoning": "استدلال عددی حداکثر ۵۰۰ کاراکتر",
-  "uncertaintyDisclosure": "بیان عدم قطعیت حداکثر ۵۰۰ کاراکتر",
-  "riskFactors": ["ریسک ۱", "ریسک ۲"],
-  "positiveFactors": ["عامل مثبت ۱", "عامل مثبت ۲"],
-  "disclaimer": "بیانیه عدم‌اعتماد حداکثر ۳۰۰ کاراکتر",
-  "trendDirection": "up | down | neutral",
-  "trendArrow": "↑ | ↓ | →",
+  "headline": "عنوان کوتاه",
+  "analysis": "تحلیل ۲ پاراگراف",
+  "quantitativeReasoning": "استدلال عددی",
+  "uncertaintyDisclosure": "عدم قطعیت",
+  "riskFactors": ["ریسک"],
+  "positiveFactors": ["مثبت"],
+  "disclaimer": "این برآورد عددی است نه مشاوره",
+  "trendDirection": "up|down|neutral",
   "confidenceScore": 0-100,
-  "trendHorizon": "1d | 1w | 1m",
-  "nearTermOutlook": "چشم‌انداز نزدیک‌مدت حداکثر ۵۰۰ کاراکتر",
-  "predictionBasis": "علت پیش‌بینی حداکثر ۳۰۰ کاراکتر",
-  "volatilityRisk": "low | medium | high"
+  "nearTermOutlook": "چشم‌انداز کوتاه‌مدت"
 }
 `.trim();
 
 const USER_PROMPT_TEMPLATE = `
-در ادامه داده‌های عددی یک سهم از بورس تهران را می‌بینید. یک تحلیل کوتاه (۲ تا ۳ پاراگراف)
-به زبان فارسی بنویس که توضیح دهد چرا این سهم در رتبه {{RANK}} از {{TOTAL}} قرار دارد.
+سهم در رتبه {{RANK}} از {{TOTAL}}.
+بر اساس داده‌های زیر تحلیل کن و فقط JSON برگردان:
 
-مگر بر اساس داده‌های فنی و بنیادی:
-1. روند کوتاه‌مدت (همین هفته) را پیش‌بینی کن (صعودی/نزولی/خنثی)
-2. از کدام جهت‌نما (↑↓→) استفاده می‌کنی
-3. امتیاز اطمینان (۰-۱۰۰) بده
-4. چشم‌انداز نزدیک‌مدت را در قالب "چه می‌تواند اتفاق بیفتد" توصیف کن
-
-دقیقاً بر اساس داده‌ها حرف بزن — هیچ حدسی نداشته باشید. اگر داده‌ای کافی نیست، بگویید.
-
-فقط JSON برگردان. بدون markdown، بدون متن اضافه.
-
-ورودی JSON:
 {{JSON_INPUT}}
 `.trim();
 
 // ──────────────── Config defaults ───────────────────────
 
-const DEFAULT_CONCURRENCY = Number(process.env.LLM_CONCURRENCY ?? 3);
-const DEFAULT_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 90_000);
+const DEFAULT_CONCURRENCY = Number(process.env.LLM_CONCURRENCY ?? 1);
+const DEFAULT_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 30_000); // reduced to 30s
 
-// Circuit-breaker tuning
 const BREAKER_FAILURE_THRESHOLD = Number(
-  process.env.LLM_BREAKER_THRESHOLD ?? 3,
+  process.env.LLM_BREAKER_THRESHOLD ?? 5,
 );
 const BREAKER_COOLDOWN_MS = Number(
   process.env.LLM_BREAKER_COOLDOWN_MS ?? 5 * 60 * 1000,
 );
+const BREAKER_TIMEOUT_GRACE = Number(
+  process.env.LLM_BREAKER_TIMEOUT_GRACE ?? 2,
+);
 
-// ──────────────── Circuit Breaker (module-level) ─────────
+// ──────────────── Circuit Breaker ────────────────────────
 
 class CircuitBreaker {
   private failures = 0;
+  private timeoutCount = 0;
   private openUntil = 0;
 
   isOpen(): boolean {
@@ -193,10 +179,21 @@ class CircuitBreaker {
 
   recordSuccess(): void {
     this.failures = 0;
+    this.timeoutCount = 0;
     this.openUntil = 0;
   }
 
-  recordFailure(): void {
+  recordFailure(isTimeout = false): void {
+    if (isTimeout) {
+      this.timeoutCount += 1;
+      if (this.timeoutCount <= BREAKER_TIMEOUT_GRACE) {
+        logger.warn(
+          `LLM timeout (${this.timeoutCount}/${BREAKER_TIMEOUT_GRACE} grace) – not counting toward breaker`,
+        );
+        return;
+      }
+    }
+
     this.failures += 1;
     if (this.failures >= BREAKER_FAILURE_THRESHOLD) {
       this.openUntil = Date.now() + BREAKER_COOLDOWN_MS;
@@ -206,6 +203,7 @@ class CircuitBreaker {
         )}s after ${this.failures} consecutive failures`,
       );
       this.failures = 0;
+      this.timeoutCount = 0;
     }
   }
 }
@@ -214,20 +212,14 @@ const breaker = new CircuitBreaker();
 
 // ──────────────── Hard-deadline helper ───────────────────
 
-/**
- * Races `fn(signal)` against a hard deadline. On timeout, aborts the
- * underlying request via `AbortController` and rejects. This is needed
- * because the OpenAI SDK's `timeout` only covers TTFB; after headers
- * arrive, the body read is untimed and can hang indefinitely.
- */
 async function withHardDeadline<T>(
   fn: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
   externalSignal?: AbortSignal,
-): Promise<T> {
+): Promise<{ result: T; elapsedMs: number }> {
   const controller = new AbortController();
+  const start = Date.now();
 
-  // Chain external abort → our controller
   const onExternalAbort = () => controller.abort(externalSignal?.reason);
   if (externalSignal) {
     if (externalSignal.aborted) controller.abort(externalSignal.reason);
@@ -239,13 +231,15 @@ async function withHardDeadline<T>(
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       const err = new Error(`LLM hard deadline (${timeoutMs}ms) exceeded`);
+      (err as any).isTimeout = true;
       controller.abort(err);
       reject(err);
     }, timeoutMs);
   });
 
   try {
-    return await Promise.race([fn(controller.signal), deadline]);
+    const result = await Promise.race([fn(controller.signal), deadline]);
+    return { result, elapsedMs: Date.now() - start };
   } finally {
     if (timer) clearTimeout(timer);
     if (externalSignal) {
@@ -263,7 +257,6 @@ export class LlmNarrator {
   public timeoutMs: number;
 
   constructor(opts?: { concurrency?: number; timeoutMs?: number }) {
-    // Env wins over config so you can swap providers without touching code.
     const apiKey = process.env.LLM_API_KEY ?? config.llm.apiKey;
     const baseURL = process.env.LLM_BASE_URL ?? config.llm.baseURL;
     const model = process.env.LLM_MODEL ?? config.llm.model;
@@ -277,7 +270,7 @@ export class LlmNarrator {
     this.client = new OpenAI({
       apiKey,
       baseURL,
-      maxRetries: 0, // breaker owns retry policy
+      maxRetries: 0,
       timeout: opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     });
 
@@ -304,8 +297,11 @@ export class LlmNarrator {
       .replace("{{TOTAL}}", String(stockInput["totalStocksRanked"] ?? "?"))
       .replace("{{JSON_INPUT}}", jsonInput);
 
+    const start = Date.now();
+    let isTimeout = false;
+
     try {
-      const response = await withHardDeadline(
+      const { result: response, elapsedMs } = await withHardDeadline(
         (requestSignal) =>
           this.client.chat.completions.create(
             {
@@ -316,7 +312,7 @@ export class LlmNarrator {
               ],
               max_tokens: config.llm.maxTokens,
               temperature: config.llm.temperature,
-              response_format: { type: "json_object" },
+              // response_format: { type: "json_object" },
             },
             { signal: requestSignal, timeout: this.timeoutMs },
           ),
@@ -324,8 +320,32 @@ export class LlmNarrator {
         signal,
       );
 
-      const raw = response.choices[0]?.message?.content;
-      if (!raw) throw new Error("Empty LLM response");
+      const choice = response.choices?.[0];
+      const message = choice?.message;
+      const raw = message?.content;
+
+      if (!raw || typeof raw !== "string" || raw.trim() === "") {
+        const finishReason = choice?.finish_reason ?? "unknown";
+        const refusal = (message as any)?.refusal;
+
+        logger.error(
+          {
+            finish_reason: finishReason,
+            refusal,
+            usage: response.usage,
+            model: this.modelName,
+            symbol: stockInput["symbol"],
+            elapsedMs,
+          },
+          "Empty or missing LLM content",
+        );
+
+        throw new Error(
+          `Empty LLM response (finish_reason=${finishReason}${
+            refusal ? `, refusal=${refusal}` : ""
+          })`,
+        );
+      }
 
       const parsed = extractJson(raw) as Record<string, unknown>;
 
@@ -339,13 +359,36 @@ export class LlmNarrator {
       });
 
       breaker.recordSuccess();
+
+      if (elapsedMs > this.timeoutMs * 0.7) {
+        logger.warn(
+          {
+            symbol: stockInput["symbol"],
+            elapsedMs,
+            model: this.modelName,
+          },
+          "LLM response was slow but succeeded",
+        );
+      }
+
       return narrative;
     } catch (err) {
-      // User-aborted requests must not count against the breaker.
-      if (!signal?.aborted) breaker.recordFailure();
+      isTimeout =
+        !!(err as any)?.isTimeout ||
+        (err instanceof Error && err.message.includes("hard deadline"));
+
+      if (!signal?.aborted) {
+        breaker.recordFailure(isTimeout);
+      }
 
       logger.error(
-        err,
+        {
+          err,
+          symbol: stockInput["symbol"] ?? "unknown",
+          isTimeout,
+          elapsedMs: Date.now() - start,
+          model: this.modelName,
+        },
         `LLM narrative generation failed for ${stockInput["symbol"] ?? "unknown"}`,
       );
       throw err;
@@ -360,22 +403,30 @@ export class LlmNarrator {
     if (stocks.length === 0) return [];
 
     const CONCURRENCY = Math.min(this.concurrency, stocks.length);
-    const results: Array<PromiseSettledResult<LlmNarrative>> = new Array(
+    // Pre-fill so we never have holes
+    const results: Array<PromiseSettledResult<LlmNarrative> | null> = new Array(
       stocks.length,
-    );
+    ).fill(null);
+
     let cursor = 0;
     const self = this;
 
     async function worker() {
       while (true) {
         if (signal?.aborted) return;
-        // If breaker opened mid-batch, stop pulling new items.
         if (breaker.isOpen()) return;
 
         const i = cursor++;
         if (i >= stocks.length) return;
+
         const stock = stocks[i];
-        if (!stock) continue;
+        if (!stock) {
+          results[i] = {
+            status: "rejected",
+            reason: new Error("empty stock slot"),
+          };
+          continue;
+        }
 
         const input = buildLlmInput(stock, sectorAggs);
 
@@ -390,14 +441,13 @@ export class LlmNarrator {
 
     await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
 
-    // 1:1 mapping — anything not fulfilled (rejected, skipped by breaker,
-    // or aborted) becomes a fallback so callers can rely on
-    // `results.length === stocks.length`.
+    // Always return a dense array
     return results.map((r, i) => {
-      if (r?.status === "fulfilled") return r.value;
-
       const stock = stocks[i];
       const symbol = (stock?.["symbol"] as string) ?? "unknown";
+
+      if (r?.status === "fulfilled") return r.value;
+
       const error =
         r?.status === "rejected"
           ? r.reason instanceof Error
@@ -407,7 +457,7 @@ export class LlmNarrator {
             ? "aborted"
             : breaker.isOpen()
               ? "circuit breaker open"
-              : "unknown error";
+              : "worker did not run (unknown)";
 
       logger.warn(`LLM failed for ${symbol}, returning fallback: ${error}`);
 
@@ -427,7 +477,7 @@ export function buildLlmInput(
   row: StockInput,
   sectorAggs?: SectorAggMap,
 ): StockInput {
-  const calcDetails = (row["calcDetails"] as Record<string, unknown>) || {};
+  // const calcDetails = (row["calcDetails"] as Record<string, unknown>) || {};
   const sector = row["sector"] as string;
   const sectorAgg = sectorAggs?.get(sector);
 
@@ -436,30 +486,16 @@ export function buildLlmInput(
     name: row["name"],
     sector,
     currentPrice: row["last_price"],
-    trailingPe: null,
     forwardPe: row["forward_pe"],
     estimatedAnnualEps: row["estimated_annual_eps"],
-    forwardPeConfidence: row["confidence"],
+    confidence: row["confidence"],
     confidenceScore: row["confidence_score"],
-    netMargin: calcDetails["netMargin"],
-    marketCap: null,
-    dailyVolume: row["volume"],
-    volumeValue: null,
-    priceChange24h: 0,
-    priceChangePercent24h: 0,
+    volume: row["volume"],
     rankingPosition: row["overallRank"],
     totalStocksRanked: row["total"] ?? 0,
-    liquidityPercentile: 0,
-    marketCapPercentile: 0,
-    dataFreshness: {
-      priceAgeSeconds: 0,
-      salesAgeDays: 0,
-      quarterlyAgeDays: 0,
-    },
-    isBank: false,
-    isInsurance: false,
-    isHoldingCompany: false,
-    calculationDisclaimer: row["disclaimer"],
+    disclaimer: row["disclaimer"],
     sectorAvgForwardPe: sectorAgg ? sectorAgg["avgForwardPe"] : null,
+    // فقط اگر لازم است:
+    // netMargin: calcDetails["netMargin"],
   };
 }

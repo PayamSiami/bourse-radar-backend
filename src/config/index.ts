@@ -17,7 +17,7 @@ const schema = z.object({
   OPENAI_API_KEY: z.string().min(1),
   OPENAI_BASE_URL: z.string().url().default("https://api.openai.com/v1"),
   LLM_MODEL: z.string().default("gpt-4o-2024-08-06"),
-  LLM_MAX_TOKENS: z.coerce.number().int().min(64).max(4096).default(2048),
+  LLM_MAX_TOKENS: z.coerce.number().int().min(64).max(4096).default(1024),// reduce to avoid truncation
   LLM_TEMPERATURE: z.coerce.number().min(0).max(1).default(0.3),
 
   // External data sources

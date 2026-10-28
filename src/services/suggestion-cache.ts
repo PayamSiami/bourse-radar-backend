@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { createHash } from "node:crypto";
 
-// 🔧 ADDED — نوع سازگار با postgres.js برای JSONB
+// ─── نوع سازگار با postgres.js برای JSONB ────────────────
 export type JsonValue =
   | string
   | number
@@ -10,7 +10,6 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-// 🔧 ADDED — تبدیل امن unknown → JsonValue با JSON round-trip
 function toJsonValue(value: unknown): JsonValue {
   return JSON.parse(JSON.stringify(value)) as JsonValue;
 }
@@ -18,7 +17,7 @@ function toJsonValue(value: unknown): JsonValue {
 /** TTL برای کش کامل پاسخ endpoint (پیش‌فرض ۳۰ دقیقه) */
 export const SUGGESTIONS_CACHE_TTL_SEC = 1800;
 
-/** TTL برای روایت هر سهم (پیش‌فرض ۶ ساعت — چون متریک‌ها دیر عوض می‌شوند) */
+/** TTL برای روایت هر سهم (پیش‌فرض ۶ ساعت) */
 export const NARRATIVE_CACHE_TTL_SEC = 6 * 3600;
 
 /** حداکثر سنی که کش Redis به‌عنوان fresh پذیرفته می‌شود */
@@ -98,7 +97,7 @@ export async function readCache<T = unknown>(
 }
 
 // ────────────────────────────────────────────────────────────
-// نوشتن کش (Postgres منبع حقیقت، Redis لایه سریع)
+// نوشتن کش
 // ────────────────────────────────────────────────────────────
 export async function writeCache(
   server: FastifyInstance,
@@ -107,7 +106,7 @@ export async function writeCache(
   model: string | null,
   ttlSec = SUGGESTIONS_CACHE_TTL_SEC,
 ): Promise<void> {
-  const jsonPayload = toJsonValue(payload); // 🔧 ADDED
+  const jsonPayload = toJsonValue(payload);
 
   // Postgres اول
   try {
@@ -190,7 +189,7 @@ export async function writeNarrative(
   narrative: unknown,
   model: string | null,
 ): Promise<void> {
-  const jsonNarrative = toJsonValue(narrative); // 🔧 ADDED
+  const jsonNarrative = toJsonValue(narrative);
 
   try {
     await server.db`
@@ -236,24 +235,19 @@ export async function purgeExpired(server: FastifyInstance): Promise<void> {
 }
 
 // ────────────────────────────────────────────────────────────
-// 🔧 ADDED — خواندن کش کهنه (بدون چک expires_at) برای stale-while-revalidate
-// ────────────────────────────────────────────────────────────
-// ────────────────────────────────────────────────────────────
 // خواندن کش کهنه (بدون چک expires_at)
 // ────────────────────────────────────────────────────────────
 export async function readStaleCache<T = unknown>(
   server: FastifyInstance,
   key: string,
 ): Promise<{ data: T; ageMs: number } | null> {
-  // 1) Redis — حتی اگر TTL گذشته، کلید حذف شده. پس Redis منبع خوبی برای stale نیست.
-  //    ولی اگر TTL دست‌نخورده باشد، readCache آن را برمی‌گرداند؛ اینجا دنبال کهنه‌ایم.
-
-  // 2) Postgres — بدون شرط expires_at
   try {
-    const [row] = await server.db<{
-      payload: T;
-      generated_at: Date;
-    }[]>`
+    const [row] = await server.db<
+      {
+        payload: T;
+        generated_at: Date;
+      }[]
+    >`
       SELECT payload, generated_at
       FROM suggestion_cache
       WHERE cache_key = ${key}
@@ -268,7 +262,7 @@ export async function readStaleCache<T = unknown>(
 }
 
 // ────────────────────────────────────────────────────────────
-// Single-flight: جلوگیری از اجرای همزمان چند refresh برای یک کلید
+// Single-flight
 // ────────────────────────────────────────────────────────────
 const inflight = new Map<string, Promise<unknown>>();
 
@@ -281,4 +275,49 @@ export async function withSingleFlight<T>(
   const promise = fn().finally(() => inflight.delete(key));
   inflight.set(key, promise);
   return promise;
+}
+
+// ────────────────────────────────────────────────────────────
+// 🔧 توابع جدید برای پاک کردن کش (مهم برای مشکل فعلی)
+// ────────────────────────────────────────────────────────────
+
+/** پاک کردن یک کلید خاص از Redis + Postgres */
+export async function invalidateCache(
+  server: FastifyInstance,
+  key: string,
+): Promise<void> {
+  try {
+    await server.redis.del(key);
+  } catch (e) {
+    server.log.warn({ err: e, key }, "redis invalidate failed");
+  }
+
+  try {
+    await server.db`DELETE FROM suggestion_cache WHERE cache_key = ${key}`;
+  } catch (e) {
+    server.log.warn({ err: e, key }, "postgres invalidate failed");
+  }
+}
+
+/** پاک کردن تمام کش‌های suggestions (برای مواقع اضطراری) */
+export async function invalidateAllSuggestions(
+  server: FastifyInstance,
+): Promise<void> {
+  try {
+    // Redis
+    const keys = await server.redis.keys("suggestions:*");
+    if (keys.length > 0) {
+      await server.redis.del(...keys);
+    }
+  } catch (e) {
+    server.log.warn({ err: e }, "redis invalidateAll failed");
+  }
+
+  try {
+    await server.db`DELETE FROM suggestion_cache`;
+  } catch (e) {
+    server.log.warn({ err: e }, "postgres invalidateAll failed");
+  }
+
+  server.log.info("All suggestions cache invalidated");
 }

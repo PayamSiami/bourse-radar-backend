@@ -100,8 +100,6 @@ export async function registerSuggestionsRoutes(
           return;
         }
       }
-
-      // ── لایه ۳: هیچ کشی نیست → تولید (با single-flight) ──
       const result = await withSingleFlight(cacheKey, () =>
         regenerate(server, cacheKey, q.data),
       );
@@ -199,7 +197,7 @@ async function regenerate(
 
   // ── LLM ───────────────────────────────────────────
   const narrator = new LlmNarrator();
-  const baseModelName: string = narrator.modelName ?? "Combo";
+  const baseModelName: string = narrator.modelName;
   let modelName: string | null = baseModelName;
   let llmError: string | null = null;
 
@@ -233,7 +231,13 @@ async function regenerate(
         misses.map(async (m, i) => {
           const item = fresh[i] as Record<string, unknown> | undefined;
           if (!item || item["fallback"] === true) return;
-          await writeNarrative(server, m.row.symbol, m.hash, item, baseModelName);
+          await writeNarrative(
+            server,
+            m.row.symbol,
+            m.hash,
+            item,
+            baseModelName,
+          );
         }),
       );
 
@@ -247,22 +251,30 @@ async function regenerate(
 
     let freshIdx = 0;
     narratives = looked.map((c) => {
-      if (c.hit) return { ...(c.hit as object), fromCache: true };
+      if (c.hit) {
+        return { ...(c.hit as object), fromCache: true };
+      }
+
       const value = fresh[freshIdx++] as Record<string, unknown> | undefined;
+
       if (!value) {
+        server.log.warn(
+          { symbol: c.row.symbol, freshLen: fresh.length },
+          "LLM batch returned undefined slot",
+        );
         return {
           symbol: c.row.symbol,
           fallback: true,
-          error: "missing LLM result",
+          error: "LLM result missing from batch",
           rawData: c.row,
         };
       }
+
       return { ...value, fromCache: false };
     });
   } catch (e: unknown) {
     llmError = e instanceof Error ? e.message : String(e);
     server.log.warn({ err: e }, "LLM generation failed, using raw fallback");
-
     narratives = rows.map((r) => ({
       symbol: r.symbol,
       fallback: true,
