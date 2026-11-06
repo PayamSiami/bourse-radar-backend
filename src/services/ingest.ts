@@ -40,6 +40,7 @@ export type WatchlistItem = {
 export const WATCHLIST: Array<WatchlistItem> = [
   // ── فلزات اساسی (Basic Metals) ──────────────────────
   { sym: "فولاد", name: "فولاد مبارکه", type: "general" },
+  { sym: "فزر", name: "پویا زرکان آق دره", type: "general" },
   { sym: "فخوز", name: "فولاد خوزستان", type: "general" },
   { sym: "فخاس", name: "فولاد خراسان", type: "general" },
   { sym: "ذوب", name: "ذوب‌آهن اصفهان", type: "general" },
@@ -62,7 +63,7 @@ export const WATCHLIST: Array<WatchlistItem> = [
   { sym: "کگل", name: "گل‌گهر", type: "general" },
   { sym: "کچاد", name: "چادرملو", type: "general" },
 
-  // // ── زراعت و دام (Agriculture & Livestock) ──────────
+  // ── زراعت و دام (Agriculture & Livestock) ──────────
   { sym: "زشگزا", name: "شیر و گوشت زاگرس شهرکرد", type: "general" },
 
   // ── پالایش و پتروشیمی (Refining & Petrochemical) ────
@@ -78,25 +79,26 @@ export const WATCHLIST: Array<WatchlistItem> = [
   { sym: "شخارک", name: "پتروشیمی خارک", type: "general" },
   { sym: "تاپیکو", name: "سرمایه‌گذاری نفت و گاز تامین", type: "general" },
 
-  // // ── شیمیایی (Chemicals) ─────────────────────────────
+  // ── شیمیایی (Chemicals) ─────────────────────────────
   { sym: "شکام", name: "صنایع شیمیایی کیمیاگران امروز", type: "general" },
   { sym: "شسینا", name: "صنایع شیمیایی سینا", type: "general" },
   { sym: "شبصیر", name: "پتروشیمی قائد بصیر", type: "general" },
   { sym: "شغدیر", name: "پتروشیمی غدیر", type: "general" },
   { sym: "شجم", name: "صنایع پتروشیمی تخت جمشید", type: "general" },
   { sym: "شفن", name: "پتروشیمی فن‌آوران", type: "general" },
+  { sym: "شیران", name: "صنایع شیمیایی ایران", type: "general" },
 
-  // // ── خودرو (Automotive) ──────────────────────────────
+  // ── خودرو (Automotive) ──────────────────────────────
   { sym: "خودرو", name: "ایران خودرو", type: "general" },
   { sym: "خساپا", name: "سایپا", type: "general" },
   { sym: "خپارس", name: "پارس خودرو", type: "general" },
   { sym: "پتایر", name: "ایران تایر", type: "general" },
   { sym: "پاسا", name: "ایران یاسا تایر", type: "general" },
 
-  // // ── لاستیک (Tires) ──────────────────────────────────
+  // ── لاستیک (Tires) ──────────────────────────────────
   { sym: "پیزد", name: "مجتمع صنایع لاستیک یزد", type: "general" },
 
-  // // ── دارویی (Pharmaceuticals) ────────────────────────
+  //── دارویی (Pharmaceuticals) ────────────────────────
   { sym: "برکت", name: "گروه دارویی برکت", type: "general" },
   { sym: "دتولید", name: "داروسازی تولید دارو", type: "general" },
   { sym: "دسبحا", name: "گروه دارویی سبحان", type: "general" },
@@ -119,7 +121,7 @@ export const WATCHLIST: Array<WatchlistItem> = [
   { sym: "سفارس", name: "سیمان فارس و خوزستان", type: "general" },
   { sym: "سبزوا", name: "سیمان لار سبزوار", type: "general" },
 
-  // // ── صنعتی و سایر (Industrial & Others) ──────────────
+  // ── صنعتی و سایر (Industrial & Others) ──────────────
   { sym: "کپشیر", name: "پشم شیشه ایران", type: "general" },
   { sym: "تپمپی", name: "پمپ‌سازی ایران", type: "general" },
   { sym: "پلاسک", name: "پلاسکوکار", type: "general" },
@@ -129,7 +131,7 @@ export const WATCHLIST: Array<WatchlistItem> = [
   { sym: "حکشتی", name: "کشتیرانی", type: "general" },
   { sym: "تمحرکه", name: "ماشین‌سازی نیرومحرکه", type: "general" },
 
-  // // ── بانک‌ها (Banks) ─────────────────────────────────
+  // ── بانک‌ها (Banks) ─────────────────────────────────
   { sym: "وبملت", name: "بانک ملت", type: "bank" },
   { sym: "وبصادر", name: "بانک صادرات", type: "bank" },
   { sym: "وپاسار", name: "بانک پاسارگاد", type: "bank" },
@@ -141,7 +143,7 @@ export const WATCHLIST: Array<WatchlistItem> = [
   { sym: "وسینا", name: "بانک سینا", type: "bank" },
   { sym: "وپست", name: "پست بانک", type: "bank" },
 
-  // // ── بیمه (Insurance) ────────────────────────────────
+  // ── بیمه (Insurance) ────────────────────────────────
   { sym: "وبیمه", name: "بیمه ایران", type: "insurance" },
   { sym: "وپارسیان", name: "بیمه پارسیان", type: "insurance" },
   { sym: "ودی", name: "بیمه دی", type: "insurance" },
@@ -150,7 +152,7 @@ export const WATCHLIST: Array<WatchlistItem> = [
   { sym: "البرز", name: "بیمه البرز", type: "insurance" },
   { sym: "دانا", name: "بیمه دانا", type: "insurance" },
 
-  // // ── هلدینگ‌ها (Holdings) ────────────────────────────
+  //── هلدینگ‌ها (Holdings) ────────────────────────────
   { sym: "پارسان", name: "گسترش نفت و گاز پارسیان", type: "holding" },
   { sym: "شستا", name: "سرمایه‌گذاری تأمین اجتماعی", type: "holding" },
   { sym: "خگستر", name: "گسترش سرمایه‌گذاری ایران‌خودرو", type: "holding" },

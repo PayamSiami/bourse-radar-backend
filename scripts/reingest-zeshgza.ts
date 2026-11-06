@@ -10,7 +10,7 @@ async function main() {
 
   try {
     const result = await sql`
-      SELECT * FROM users
+      SELECT * FROM users;
     `;
     console.log(JSON.stringify(result));
   } finally {

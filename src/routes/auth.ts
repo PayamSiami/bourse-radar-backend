@@ -16,12 +16,13 @@ function toPublicUser(u: any) {
     id: u.id,
     email: u.email,
     username: u.username ?? null,
-    displayName: u.displayName ?? u.username ?? null,
-    avatarUrl: u.avatarUrl ?? null,
+    displayName: u.display_name ?? u.username ?? null,
+    avatarUrl: u.avatar_url ?? null,
     phone: u.phone ?? null,
     country: u.country ?? null,
     city: u.city ?? null,
     verified: Boolean(u.verified),
+    is_admin: Boolean(u.is_admin),
     emailVerifiedAt: u.emailVerifiedAt ?? null,
   };
 }

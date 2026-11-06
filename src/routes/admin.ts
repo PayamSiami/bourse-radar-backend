@@ -33,13 +33,13 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         return reply.send({
           success: true,
           data: result,
-          message: "??????? ?? ?????? ?????? ????",
+          message: "کاربران دریافت شدند",
         });
       } catch (error: any) {
         server.log.error(error, "Admin failed to list users");
         return reply.status(500).send({
           success: false,
-          error: error.message || "??? ?? ?????? ???? ???????",
+          error: error.message || "خطا در دریافت کاربران",
         });
       }
     },
@@ -56,13 +56,11 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         const userId = parseInt((req.params as any).id, 10);
         const user = await service.getUser(userId);
         if (!user)
-          return reply
-            .status(404)
-            .send({ success: false, error: "????? ???? ???" });
+          return reply.status(404).send({ success: false, error: "کاربر یافت نشد" });
         return reply.send({
           success: true,
           data: user,
-          message: "????? ?? ?????? ?????? ??",
+          message: "کاربر دریافت شد",
         });
       } catch (error: any) {
         server.log.error(
@@ -71,7 +69,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         );
         return reply.status(500).send({
           success: false,
-          error: error.message || "??? ?? ?????? ?????",
+          error: error.message || "خطا در دریافت کاربر",
         });
       }
     },
@@ -92,7 +90,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         return reply.send({
           success: true,
           data: user,
-          message: "??? ????? ?? ?????? ????? ??",
+          message: "نقش کاربر به‌روزرسانی شد",
         });
       } catch (error: any) {
         server.log.error(
@@ -101,7 +99,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         );
         return reply.status(500).send({
           success: false,
-          error: error.message || "??? ?? ????? ??? ?????",
+          error: error.message || "خطا در بروزرسانی نقش",
         });
       }
     },
@@ -117,7 +115,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
       try {
         const userId = parseInt((req.params as any).id, 10);
         await service.deleteUser(userId);
-        return reply.send({ success: true, message: "????? ?? ?????? ??? ??" });
+        return reply.send({ success: true, message: "کاربر حذف شد" });
       } catch (error: any) {
         server.log.error(
           error,
@@ -125,7 +123,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         );
         return reply
           .status(500)
-          .send({ success: false, error: error.message || "??? ?? ??? ?????" });
+          .send({ success: false, error: error.message || "خطا در حذف کاربر" });
       }
     },
   );
@@ -156,13 +154,13 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         return reply.send({
           success: true,
           data: result,
-          message: "??????? ?? ?????? ?????? ????",
+          message: "تیکت‌ها دریافت شدند",
         });
       } catch (error: any) {
         server.log.error(error, "Admin failed to list tickets");
         return reply.status(500).send({
           success: false,
-          error: error.message || "??? ?? ?????? ???? ???????",
+          error: error.message || "خطا در دریافت تیکت‌ها",
         });
       }
     },
@@ -179,13 +177,11 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         const ticketId = parseInt((req.params as any).id, 10);
         const ticket = await service.getTicket(ticketId);
         if (!ticket)
-          return reply
-            .status(404)
-            .send({ success: false, error: "???? ???? ???" });
+          return reply.status(404).send({ success: false, error: "تیکت یافت نشد" });
         return reply.send({
           success: true,
           data: ticket,
-          message: "???? ?? ?????? ?????? ??",
+          message: "تیکت دریافت شد",
         });
       } catch (error: any) {
         server.log.error(
@@ -194,7 +190,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         );
         return reply.status(500).send({
           success: false,
-          error: error.message || "??? ?? ?????? ????",
+          error: error.message || "خطا در دریافت تیکت",
         });
       }
     },
@@ -207,7 +203,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
       preHandler: [authMiddlewareHandler, adminMiddleware],
       schema: {
         tags: ["admin"],
-        summary: "????? ????? ????",
+        summary: "بروزرسانی وضعیت تیکت",
         params: { type: "object", properties: { id: { type: "string" } } },
         body: {
           type: "object",
@@ -229,7 +225,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         return reply.send({
           success: true,
           data: ticket,
-          message: "????? ???? ?? ?????? ????? ??",
+          message: "وضعیت تیکت به‌روزرسانی شد",
         });
       } catch (error: any) {
         server.log.error(
@@ -238,7 +234,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         );
         return reply.status(500).send({
           success: false,
-          error: error.message || "??? in ????? ????? ????",
+          error: error.message || "خطا در بروزرسانی وضعیت تیکت",
         });
       }
     },
@@ -251,7 +247,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
       preHandler: [authMiddlewareHandler, adminMiddleware],
       schema: {
         tags: ["admin"],
-        summary: "?????? ???? ?? ????",
+        summary: "افزودن پیام به تیکت",
         params: { type: "object", properties: { id: { type: "string" } } },
         body: { type: "object", properties: { message: { type: "string" } } },
       },
@@ -265,7 +261,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         if (!userId)
           return reply
             .status(401)
-            .send({ success: false, error: "????? ????? ???? ???? ???" });
+            .send({ success: false, error: "کاربر شناسایی نشد" });
         const messageData = await service.addTicketMessage(
           ticketId,
           userId,
@@ -274,7 +270,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         return reply.send({
           success: true,
           data: messageData,
-          message: "???? ?? ?????? ??? ??",
+          message: "پیام اضافه شد",
         });
       } catch (error: any) {
         server.log.error(
@@ -283,7 +279,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         );
         return reply
           .status(500)
-          .send({ success: false, error: error.message || "??? ?? ??? ????" });
+          .send({ success: false, error: error.message || "خطا در اضافه کردن پیام" });
       }
     },
   );
@@ -295,7 +291,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
       preHandler: [authMiddlewareHandler, adminMiddleware],
       schema: {
         tags: ["admin"],
-        summary: "???? ???????? ????",
+        summary: "دریافت پیام‌های تیکت",
         params: { type: "object", properties: { id: { type: "string" } } },
         querystring: {
           type: "object",
@@ -319,7 +315,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         return reply.send({
           success: true,
           data: messages,
-          message: "???????? ???? ?? ?????? ?????? ????",
+          message: "پیام‌ها دریافت شدند",
         });
       } catch (error: any) {
         server.log.error(
@@ -328,7 +324,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         );
         return reply.status(500).send({
           success: false,
-          error: error.message || "??? ?? ?????? ???????? ????",
+          error: error.message || "خطa in دریافت پیام‌های تیکت",
         });
       }
     },
@@ -341,7 +337,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
       preHandler: [authMiddlewareHandler, adminMiddleware],
       schema: {
         tags: ["admin"],
-        summary: "?????? ????",
+        summary: "بروزرسانی سهام",
         params: { type: "object", properties: { symbol: { type: "string" } } },
         body: {
           type: "object",
@@ -367,7 +363,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         return reply.send({
           success: true,
           data: stock,
-          message: "???? ?? ?????? ????????? ??",
+          message: "سهام به‌روزرسانی شد",
         });
       } catch (error: any) {
         server.log.error(
@@ -376,7 +372,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         );
         return reply.status(500).send({
           success: false,
-          error: error.message || "??? ?? ????????? ????",
+          error: error.message || "خطa in بروزرسانی سهام",
         });
       }
     },
@@ -389,7 +385,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
       preHandler: [authMiddlewareHandler, adminMiddleware],
       schema: {
         tags: ["admin"],
-        summary: "??? ????",
+        summary: "حذف سهام",
         params: { type: "object", properties: { symbol: { type: "string" } } },
       },
     },
@@ -397,7 +393,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
       try {
         const symbol = (req.params as any).symbol;
         await service.deleteStock(symbol);
-        return reply.send({ success: true, message: "???? ?? ?????? ??? ??" });
+        return reply.send({ success: true, message: "سهام حذف شد" });
       } catch (error: any) {
         server.log.error(
           error,
@@ -405,7 +401,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
         );
         return reply
           .status(500)
-          .send({ success: false, error: error.message || "??? ?? ??? ????" });
+          .send({ success: false, error: error.message || "خطا in حذف سهام" });
       }
     },
   );
@@ -415,7 +411,7 @@ export async function registerAdminRoutes(server: FastifyInstance) {
     "/api/admin/dashboard/stats",
     {
       preHandler: [authMiddlewareHandler, adminMiddleware],
-      schema: { tags: ["admin"], summary: "???? ??????? ??????" },
+      schema: { tags: ["admin"], summary: "دریافت آمار داشبورد" },
     },
     async (_req: FastifyRequest, reply: FastifyReply) => {
       try {
@@ -429,18 +425,18 @@ export async function registerAdminRoutes(server: FastifyInstance) {
             verifiedUsers: number;
           }[]
         >`
-          SELECT (SELECT COUNT(*)::int FROM users) as "total", (SELECT COUNT(*)::int FROM users WHERE created_at >= ${thisMonth}) as "newUsers", (SELECT COUNT(*)::int FROM users WHERE is_admin = true) as "admins", (SELECT COUNT(*)::int FROM users WHERE verified = true) as "verifiedUsers"
-        `;
+            SELECT (SELECT COUNT(*)::int FROM users) as "total", (SELECT COUNT(*)::int FROM users WHERE created_at >= ${thisMonth}) as "newUsers", (SELECT COUNT(*)::int FROM users WHERE is_admin = true) as "admins", (SELECT COUNT(*)::int FROM users WHERE verified = true) as "verifiedUsers"
+          `;
         const ticketStats = await server.db<
           { total: number; open: number; pending: number; resolved: number }[]
         >`
-          SELECT (SELECT COUNT(*)::int FROM tickets) as "total", (SELECT COUNT(*)::int FROM tickets WHERE status = 'open') as "open", (SELECT COUNT(*)::int FROM tickets WHERE status = 'pending') as "pending", (SELECT COUNT(*)::int FROM tickets WHERE status = 'resolved') as "resolved"
-        `;
+            SELECT (SELECT COUNT(*)::int FROM tickets) as "total", (SELECT COUNT(*)::int FROM tickets WHERE status = 'open') as "open", (SELECT COUNT(*)::int FROM tickets WHERE status = 'pending') as "pending", (SELECT COUNT(*)::int FROM tickets WHERE status = 'resolved') as "resolved"
+          `;
         const stockStats = await server.db<
           { total: number; activeWithPrice: number }[]
         >`
-          SELECT (SELECT COUNT(*)::int FROM stocks) as "total", (SELECT COUNT(*)::int FROM stocks s WHERE EXISTS (SELECT 1 FROM prices p WHERE p.symbol = s.symbol AND p.timestamp > NOW() - INTERVAL '1 day')) as "activeWithPrice"
-        `;
+            SELECT (SELECT COUNT(*)::int FROM stocks) as "total", (SELECT COUNT(*)::int FROM stocks s WHERE EXISTS (SELECT 1 FROM prices p WHERE p.symbol = s.symbol AND p.timestamp > NOW() - INTERVAL '1 day')) as "activeWithPrice"
+          `;
         return reply.send({
           success: true,
           data: {
@@ -448,13 +444,152 @@ export async function registerAdminRoutes(server: FastifyInstance) {
             tickets: ticketStats[0],
             stocks: stockStats[0],
           },
-          message: "???? ??????? ?????? ??",
+          message: "آمار دریافت شد",
         });
       } catch (error: any) {
         server.log.error(error, "Admin failed to get dashboard stats");
         return reply.status(500).send({
           success: false,
-          error: error.message || "??? ?? ?????? ????",
+          error: error.message || "خطa in دریافت آمار",
+        });
+      }
+    },
+  );
+
+  // GET /api/admin/tasks
+  server.get(
+    "/api/admin/tasks",
+    {
+      preHandler: [authMiddlewareHandler, adminMiddleware],
+    },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const query = req.query as any;
+        const {
+          page = 1,
+          pageSize = 20,
+          priority = undefined,
+          status = undefined,
+          phase = undefined,
+          search = undefined,
+        } = query;
+        const result = await service.listTasks({
+          page: Number(page),
+          pageSize: Number(pageSize),
+          priority,
+          status,
+          phase,
+          search,
+        });
+        return reply.send({
+          success: true,
+          data: result,
+          message: "تسک‌ها دریافت شدند",
+        });
+      } catch (error: any) {
+        server.log.error(error, "Admin failed to list tasks");
+        return reply.status(500).send({
+          success: false,
+          error: error.message || "خطa in دریافت تسک‌ها",
+        });
+      }
+    },
+  );
+
+  // GET /api/admin/tasks/:id
+  server.get(
+    "/api/admin/tasks/:id",
+    {
+      preHandler: [authMiddlewareHandler, adminMiddleware],
+    },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const taskId = parseInt((req.params as any).id, 10);
+        const task = await service.getTask(taskId);
+        if (!task)
+          return reply.status(404).send({ success: false, error: "تسک یافت نشد" });
+        return reply.send({
+          success: true,
+          data: task,
+          message: "تسک دریافت شد",
+        });
+      } catch (error: any) {
+        server.log.error(error, `Admin failed to get task: ${(req.params as any).id}`);
+        return reply.status(500).send({
+          success: false,
+          error: error.message || "خطa in دریافت تسک",
+        });
+      }
+    },
+  );
+
+  // POST /api/admin/tasks
+  server.post(
+    "/api/admin/tasks",
+    {
+      preHandler: [authMiddlewareHandler, adminMiddleware],
+    },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const taskData = req.body as any;
+        const task = await service.createTask(taskData);
+        return reply.status(201).send({
+          success: true,
+          data: task,
+          message: "تسک جدید ایجاد شد",
+        });
+      } catch (error: any) {
+        server.log.error(error, "Admin failed to create task");
+        return reply.status(500).send({
+          success: false,
+          error: error.message || "خطa in ایجاد تسک",
+        });
+      }
+    },
+  );
+
+  // PUT /api/admin/tasks/:id
+  server.put(
+    "/api/admin/tasks/:id",
+    {
+      preHandler: [authMiddlewareHandler, adminMiddleware],
+    },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const taskId = parseInt((req.params as any).id, 10);
+        const taskData = req.body as any;
+        const task = await service.updateTask(taskId, taskData);
+        return reply.send({
+          success: true,
+          data: task,
+          message: "تسک به‌روزرسانی شد",
+        });
+      } catch (error: any) {
+        server.log.error(error, `Admin failed to update task: ${(req.params as any).id}`);
+        return reply.status(500).send({
+          success: false,
+          error: error.message || "خطa in بروزرسانی تسک",
+        });
+      }
+    },
+  );
+
+  // DELETE /api/admin/tasks/:id
+  server.delete(
+    "/api/admin/tasks/:id",
+    {
+      preHandler: [authMiddlewareHandler, adminMiddleware],
+    },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const taskId = parseInt((req.params as any).id, 10);
+        await service.deleteTask(taskId);
+        return reply.send({ success: true, message: "تسک حذف شد" });
+      } catch (error: any) {
+        server.log.error(error, `Admin failed to delete task: ${(req.params as any).id}`);
+        return reply.status(500).send({
+          success: false,
+          error: error.message || "خطa in حذف تسک",
         });
       }
     },

@@ -463,6 +463,171 @@ export class AdminService {
     }
   }
 
+  // ============ Task Management ============
+
+  async listTasks(
+    filters: {
+      page?: number;
+      pageSize?: number;
+      priority?: string;
+      status?: string;
+      phase?: string;
+      search?: string;
+    } = {},
+  ): Promise<{
+    tasks: any[];
+    total: number;
+    page: number;
+    pageSize: number;
+    totalPages: number;
+  }> {
+    try {
+      const {
+        page = 1,
+        pageSize = 20,
+        priority = undefined,
+        status = undefined,
+        phase = undefined,
+        search = undefined,
+      } = filters;
+
+      const start = (page - 1) * pageSize;
+
+      const conditions: string[] = [];
+      const params: any[] = [];
+      let id = 1;
+
+      if (priority) {
+        conditions.push(`priority = ${id}`);
+        params.push(priority);
+        id++;
+      }
+
+      if (status) {
+        conditions.push(`status = ${id}`);
+        params.push(status);
+        id++;
+      }
+
+      if (phase) {
+        conditions.push(`phase = ${id}`);
+        params.push(parseInt(phase));
+        id++;
+      }
+
+      if (search) {
+        conditions.push(`(task_name ILIKE ${id} OR description ILIKE ${id} OR module ILIKE ${id})`);
+        params.push(`%${search}%`);
+        id++;
+      }
+
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+      const countResult = await this.sql`
+        SELECT COUNT(*)::int as total FROM tasks ${whereClause}
+      `;
+
+      const total = countResult[0]?.total || 0;
+      const totalPages = Math.ceil(total / pageSize);
+
+      const result = await this.sql`
+        SELECT * FROM tasks
+        ${whereClause}
+        ORDER BY created_at DESC
+        LIMIT ${pageSize}
+        OFFSET ${start}
+      `;
+
+      return {
+        tasks: result,
+        total,
+        page,
+        pageSize,
+        totalPages,
+      };
+    } catch (error) {
+      logger.error(error, 'Failed to list tasks');
+      throw error;
+    }
+  }
+
+  async getTask(id: number) {
+    try {
+      const result = await this.sql`SELECT * FROM tasks WHERE id = ${id}`;
+      return result[0] || null;
+    } catch (error) {
+      logger.error(error, `Failed to get task: ${id}`);
+      throw error;
+    }
+  }
+
+  async createTask(taskData: any) {
+    try {
+      const { task_id, task_name, module, phase, priority, status, dependency, description, data_source } = taskData;
+
+      const result = await this.sql`
+        INSERT INTO tasks (task_id, task_name, module, phase, priority, status, dependency, description, data_source)
+        VALUES (${task_id}, ${task_name}, ${module}, ${phase}, ${priority}, ${status}, ${dependency}, ${description}, ${data_source})
+        RETURNING *
+      `;
+
+      logger.info(`Task created: ${task_id}`);
+      return result[0];
+    } catch (error) {
+      logger.error(error, `Failed to create task: ${taskData.task_id}`);
+      throw error;
+    }
+  }
+
+  async updateTask(id: number, taskData: any) {
+    try {
+      const allowed = ['task_name', 'module', 'phase', 'priority', 'status', 'dependency', 'description', 'data_source'];
+      const updates: Record<string, any> = {};
+
+      for (const field of allowed) {
+        if (taskData[field] !== undefined) {
+          updates[field] = taskData[field];
+        }
+      }
+
+      if (Object.keys(updates).length === 0) {
+        throw new Error('هیچ داده‌ای برای به‌روزرسانی وجود ندارد');
+      }
+
+      const result = await this.sql`
+        UPDATE tasks
+        SET ${this.sql(updates)}, updated_at = NOW()
+        WHERE id = ${id}
+        RETURNING *
+      `;
+
+      if (result.length === 0) {
+        throw new Error('تسک یافت نشد');
+      }
+
+      logger.info(`Task ${id} updated by admin`);
+      return result[0];
+    } catch (error) {
+      logger.error(error, `Failed to update task: ${id}`);
+      throw error;
+    }
+  }
+
+  async deleteTask(id: number) {
+    try {
+      const result = await this.sql`DELETE FROM tasks WHERE id = ${id}`;
+
+      if (result.length === 0) {
+        throw new Error('تسک یافت نشد');
+      }
+
+      logger.info(`Task ${id} deleted by admin`);
+    } catch (error) {
+      logger.error(error, `Failed to delete task: ${id}`);
+      throw error;
+    }
+  }
+
   private mapToUserWithRole(row: any): UserWithRole {
     return {
       id: row.id,
