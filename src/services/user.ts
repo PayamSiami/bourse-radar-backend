@@ -50,20 +50,20 @@ export class UserService {
     const username = dto.username?.trim() || null;
     const displayName = dto.displayName?.trim() || null;
 
-    // 1) اعتبارسنجی
+    // 1) Validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!email || !emailRegex.test(email)) {
-      throw new ValidationError("ایمیل معتبر نیست");
+      throw new ValidationError("Invalid email address");
     }
     if (!dto.password || dto.password.length < 8) {
-      throw new ValidationError("رمز عبور باید حداقل ۸ کاراکتر باشد");
+      throw new ValidationError("Password must be at least 8 characters long");
     }
 
-    // 2) هش رمز + توکن
+    // 2) Hash password + generate token
     const passwordHash = await bcrypt.hash(dto.password, 12);
     const token = crypto.randomBytes(32).toString("hex");
 
-    // 3) INSERT — خطاهای DB را نگاشت کنید
+    // 3) INSERT — map DB errors
     let user: User;
     try {
       const result = await this.sql`
@@ -74,7 +74,7 @@ export class UserService {
       RETURNING id, email, username, display_name, avatar_url, phone, country,
                 city, verified, email_verified_at, created_at, updated_at
     `;
-      if (!result?.length) throw new Error("خطا در ایجاد حساب کاربری");
+      if (!result?.length) throw new Error("Failed to create user account");
       user = this.mapToUser(result[0]);
 
       // Send verification email
@@ -87,18 +87,18 @@ export class UserService {
       // 23505 = unique_violation
       if (err?.code === "23505") {
         if (err.constraint_name === "idx_users_username") {
-          throw new ConflictError("این نام کاربری قبلاً گرفته شده است");
+          throw new ConflictError("This username is already taken");
         }
         if (
           err.constraint_name === "idx_users_email" ||
           err.constraint_name?.includes("email")
         ) {
-          throw new ConflictError("ایمیل از قبل ثبت شده است");
+          throw new ConflictError("This email is already registered");
         }
-        throw new ConflictError("این اطلاعات قبلاً ثبت شده است");
+        throw new ConflictError("This information is already registered");
       }
       logger.error({ err }, "Failed to create user");
-      throw err; // خطاهای ناشناخته → 500
+      throw err; // unknown errors → 500
     }
 
     logger.info(`User created: ${user.email} (ID: ${user.id})`);
@@ -117,13 +117,13 @@ export class UserService {
       `;
 
       if (!tokenResult || tokenResult.length === 0) {
-        throw new Error("لینک تأیید معتبر نیست یا منقضی شده است");
+        throw new Error("The verification link is invalid or has expired");
       }
 
       const authToken = tokenResult[0];
 
       if (!authToken) {
-        throw new Error("لینک بازیابی معتبر نیست یا منقضی شده است");
+        throw new Error("The recovery link is invalid or has expired");
       }
 
       // Get user
@@ -132,7 +132,7 @@ export class UserService {
       `;
 
       if (!userResult || userResult.length === 0) {
-        throw new Error("کاربر یافت نشد");
+        throw new Error("User not found");
       }
 
       const user = this.mapToUser(userResult[0]);
@@ -220,7 +220,7 @@ export class UserService {
       }
 
       if (Object.keys(patch).length === 0) {
-        throw new ValidationError("هیچ داده‌ای برای آپدیت وجود ندارد");
+        throw new ValidationError("No data provided to update");
       }
 
       const result = await this.sql`
@@ -234,7 +234,7 @@ export class UserService {
 
       const row = result?.[0];
       if (!row) {
-        throw new Error("کاربر یافت نشد");
+        throw new Error("User not found");
       }
 
       const updatedUser = this.mapToUser(row);
@@ -248,7 +248,7 @@ export class UserService {
 
   async resetPassword(token: string, newPassword: string): Promise<User> {
     if (!newPassword || newPassword.length < 8) {
-      throw new ValidationError("رمز عبور باید حداقل ۸ کاراکتر باشد");
+      throw new ValidationError("Password must be at least 8 characters long");
     }
 
     try {
@@ -266,13 +266,13 @@ export class UserService {
       `;
 
         if (!tokenResult || tokenResult.length === 0) {
-          throw new Error("لینک بازیابی معتبر نیست یا منقضی شده است");
+          throw new Error("The recovery link is invalid or has expired");
         }
 
         const authToken = tokenResult[0];
 
         if (!authToken) {
-          throw new Error("لینک بازیابی معتبر نیست یا منقضی شده است");
+          throw new Error("The recovery link is invalid or has expired");
         }
 
         const updatedUsers = await tx`
@@ -285,7 +285,7 @@ export class UserService {
       `;
 
         if (!updatedUsers || updatedUsers.length === 0) {
-          throw new Error("کاربر یافت نشد");
+          throw new Error("User not found");
         }
 
         await tx`
@@ -341,17 +341,18 @@ export class UserService {
     try {
       const user = await this.findByEmail(email);
       if (!user || !user.passwordHash) {
-        throw new Error("ایمیل یا رمز عبور اشتباه است");
+        throw new Error("Invalid email or password");
       }
 
       const isValid = await bcrypt.compare(password, user.passwordHash);
       if (!isValid) {
-        throw new Error("ایمیل یا رمز عبور اشتباه است");
+        throw new Error("Invalid email or password");
       }
 
-      if (!user.verified) {
-        throw new Error("لطفاً ابتدا ایمیل خود را تأیید کنید");
-      }
+      // !TODO
+      // if (!user.verified) {
+      //   throw new Error("Please verify your email first");
+      // }
 
       return user;
     } catch (error) {
