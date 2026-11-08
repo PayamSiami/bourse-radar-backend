@@ -17,7 +17,7 @@ const UA =
 
 const HEADERS = {
   "User-Agent": UA,
-  "Accept": "application/json, text/plain, */*",
+  Accept: "application/json, text/plain, */*",
   "Accept-Language": "en-US,en;q=0.9",
 };
 
@@ -59,7 +59,8 @@ export interface ClosingPriceResponse {
 
 function toNum(v: unknown): number {
   if (v === null || v === undefined || v === "") return 0;
-  const n = typeof v === "number" ? v : parseInt(String(v).replace(/,/g, ""), 10);
+  const n =
+    typeof v === "number" ? v : parseInt(String(v).replace(/,/g, ""), 10);
   return Number.isNaN(n) ? 0 : n;
 }
 
@@ -108,7 +109,9 @@ export async function fetchInstrumentInfo(
     sector: inst.sector?.lSecVal ?? "",
     isin: inst.cIsin ?? "",
     zTitad: inst.zTitad ?? 0,
-    estimatedEps: inst.eps?.estimatedEPS ? parseFloat(inst.eps.estimatedEPS) : null,
+    estimatedEps: inst.eps?.estimatedEPS
+      ? parseFloat(inst.eps.estimatedEPS)
+      : null,
     sectorPE: inst.eps?.sectorPE ?? null,
     psr: inst.eps?.psr ?? null,
   };

@@ -32,20 +32,31 @@ function publicError(err: any, fallback: string): string {
   const msg = typeof err?.message === "string" ? err.message : "";
 
   // Known application errors (thrown by the service)
-  if (msg === "کاربر یافت نشد") return msg;
+  if (msg === "User not found") return msg;
+  if (msg === "Invalid email or password") return "Invalid login credentials";
+  if (msg === "Please verify your email first") return msg;
+  if (msg === "Invalid email address") return msg;
+  if (msg === "Password must be at least 8 characters long") return msg;
+  if (msg === "The verification link is invalid or has expired") return msg;
+  if (msg === "The recovery link is invalid or has expired") return msg;
+  if (msg === "No data provided to update") return "No fields provided for update";
+  if (msg === "This email is already registered") return msg;
+  if (msg === "This username is already taken") return msg;
+  if (msg === "This information is already registered") return msg;
+
+  // Raw Postgres errors (in case they slip through unmapped)
   if (msg.includes("duplicate key") && msg.includes("users_email_key")) {
-    return "این ایمیل قبلاً ثبت شده است";
+    return "This email is already registered";
   }
   if (msg.includes("duplicate key") && msg.includes("users_username_key")) {
-    return "این نام کاربری قبلاً ثبت شده است";
+    return "This username is already taken";
   }
   if (msg.includes("value too long")) {
-    return "مقدار وارد شده از حد مجاز طولانی‌تر است";
+    return "The value entered is too long";
   }
   if (msg.includes("invalid input syntax")) {
-    return "داده‌های ورودی نامعتبر است";
+    return "Invalid input data";
   }
-  if (msg === "اطلاعات ورود اشتباه است") return msg;
 
   // Don't leak internal details
   return fallback;
@@ -95,7 +106,7 @@ export function registerAuthRoutes(
 
         return reply.status(201).send({
           success: true,
-          message: "ثبت‌نام موفقیت‌آمیز بود. لطفاً ایمیل خود را تأیید کنید.",
+          message: "Registration successful. Please verify your email.",
           user: toPublicUser(result.user),
           token,
         });
@@ -103,7 +114,7 @@ export function registerAuthRoutes(
         logger.error(error, "Registration failed");
         return reply.status(400).send({
           success: false,
-          error: publicError(error, "ثبت‌نام موفقیت‌آمیز نبود"),
+          error: publicError(error, "Registration was not successful"),
         });
       }
     },
@@ -138,7 +149,7 @@ export function registerAuthRoutes(
         if (!credential) {
           return reply.status(400).send({
             success: false,
-            error: "کد یا توکن تأیید الزامی است",
+            error: "A verification code or token is required",
           });
         }
 
@@ -147,7 +158,7 @@ export function registerAuthRoutes(
 
         return reply.send({
           success: true,
-          message: "ایمیل شما با موفقیت تأیید شد. اکنون می‌توانید وارد شوید.",
+          message: "Your email has been verified successfully. You can now log in.",
           user: toPublicUser(user),
           token,
         });
@@ -155,7 +166,7 @@ export function registerAuthRoutes(
         logger.error(error, "Email verification failed");
         return reply.status(400).send({
           success: false,
-          error: publicError(error, "تأیید ایمیل موفقیت‌آمیز نبود"),
+          error: publicError(error, "Email verification was not successful"),
         });
       }
     },
@@ -173,13 +184,13 @@ export function registerAuthRoutes(
         // await userService.resendVerificationEmail(req.user!.id);
         return reply.send({
           success: true,
-          message: "کد تأیید جدید به ایمیل شما ارسال شد",
+          message: "A new verification code has been sent to your email",
         });
       } catch (error) {
         logger.error(error, "Resend verification failed");
         return reply.status(400).send({
           success: false,
-          error: publicError(error, "ارسال کد تأیید انجام نشد"),
+          error: publicError(error, "Failed to send verification code"),
         });
       }
     },
@@ -213,7 +224,7 @@ export function registerAuthRoutes(
 
         return reply.send({
           success: true,
-          message: "ورود موفقیت‌آمیز بود",
+          message: "Login successful",
           user: toPublicUser(user),
           token,
         });
@@ -221,7 +232,7 @@ export function registerAuthRoutes(
         logger.error(error, "Login failed");
         return reply.status(401).send({
           success: false,
-          error: "اطلاعات ورود اشتباه است",
+          error: publicError(error, "Invalid login credentials"),
         });
       }
     },
@@ -234,7 +245,7 @@ export function registerAuthRoutes(
     async (_req, reply) => {
       return reply.send({
         success: true,
-        message: "خروج موفقیت‌آمیز بود",
+        message: "Logout successful",
       });
     },
   );
@@ -249,7 +260,7 @@ export function registerAuthRoutes(
         if (!user) {
           return reply.status(404).send({
             success: false,
-            error: "کاربر یافت نشد",
+            error: "User not found",
           });
         }
         return reply.send({
@@ -260,7 +271,7 @@ export function registerAuthRoutes(
         logger.error(error, "Failed to get user profile");
         return reply.status(500).send({
           success: false,
-          error: "خطا در دریافت اطلاعات کاربر",
+          error: "Failed to retrieve user information",
         });
       }
     },
@@ -315,7 +326,7 @@ export function registerAuthRoutes(
         if (Object.keys(updates).length === 0) {
           return reply.status(400).send({
             success: false,
-            error: "هیچ فیلدی برای به‌روزرسانی ارسال نشده است",
+            error: "No fields provided for update",
           });
         }
 
@@ -326,14 +337,14 @@ export function registerAuthRoutes(
 
         return reply.send({
           success: true,
-          message: "پروفایل با موفقیت به‌روزرسانی شد",
+          message: "Profile updated successfully",
           user: toPublicUser(updatedUser),
         });
       } catch (error) {
         logger.error(error, "Failed to update profile");
         return reply.status(400).send({
           success: false,
-          error: publicError(error, "خطا در به‌روزرسانی پروفایل"),
+          error: publicError(error, "Failed to update profile"),
         });
       }
     },
@@ -370,7 +381,7 @@ export function registerAuthRoutes(
       }
       return reply.send({
         success: true,
-        message: "اگر این ایمیل ثبت شده باشد، لینک بازیابی ارسال خواهد شد",
+        message: "If this email is registered, a recovery link will be sent",
       });
     },
   );
@@ -401,13 +412,13 @@ export function registerAuthRoutes(
         await userService.resetPassword(body.token, body.newPassword);
         return reply.send({
           success: true,
-          message: "رمز عبور شما با موفقیت تغییر کرد",
+          message: "Your password has been changed successfully",
         });
       } catch (error) {
         logger.error(error, "Failed to reset password");
         return reply.status(400).send({
           success: false,
-          error: publicError(error, "بازیابی رمز عبور موفقیت‌آمیز نبود"),
+          error: publicError(error, "Password reset was not successful"),
         });
       }
     },
