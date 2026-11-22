@@ -216,5 +216,51 @@ export function buildAdminResources(db: any) {
         },
       },
     },
+
+     // symbol sector margins
+    {
+      resource: db.table("symbol_sector_margins"),
+      options: {
+        navigation: {
+          name: "Sector Margins",
+          icon: "TrendingUp",
+        },
+        properties: {
+          id: { isVisible: { list: true, show: true, filter: true, edit: false } },
+          symbol: { 
+            isVisible: { 
+              list: true, show: true, filter: true, 
+              edit: true 
+            } 
+          },
+          sector: { 
+            isVisible: { 
+              list: true, show: true, filter: true, 
+              edit: true 
+            } 
+          },
+          profit_margin: { 
+            isVisible: { 
+              list: true, show: true, filter: true, 
+              edit: true 
+            }, 
+            type: "number" 
+          },
+          effective_from: { 
+            isVisible: { list: true, show: true, filter: true } 
+          },
+          effective_to: { 
+            isVisible: { list: true, show: true, filter: true } 
+          },
+        },
+        listProperties: ["symbol", "sector", "profit_margin"],
+        showProperties: ["symbol", "sector", "profit_margin"],
+        actions: {
+          new: { isAccessible: true },
+          edit: { isAccessible: true },
+          delete: { isAccessible: true },
+        },
+      },
+    },
   ];
 }
