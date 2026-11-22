@@ -162,35 +162,76 @@ export class AdminService {
     }
   }
 
-  async updateUserRole(id: number, is_admin: boolean): Promise<UserWithRole> {
+  async updateUserRole(
+    id: number,
+    is_admin: boolean,
+    actorId: number,
+  ): Promise<UserWithRole> {
     try {
-      const result = await this.sql`
-        UPDATE users
-        SET is_admin = ${is_admin}, updated_at = NOW()
-        WHERE id = ${id}
-        RETURNING 
-          users.id,
-          users.email,
-          users.username,
-          users.display_name,
-          users.avatar_url,
-          users.phone,
-          users.country,
-          users.city,
-          users.verified,
-          users.is_admin,
-          users.created_at,
-          users.updated_at
-      `;
+      // Single UPDATE with an inline guard:
+      //   - promote: always allowed
+      //   - demote someone else: always allowed
+      //   - demote yourself: allowed only if there's another admin
+      //
+      // The subquery `(SELECT COUNT(*) FROM users WHERE is_admin = TRUE) > 1`
+      // is evaluated under the row lock acquired by this UPDATE, so two
+      // concurrent demotions cannot both see "2 admins left" and both
+      // succeed. (Postgres guarantees: the UPDATE re-reads the table state
+      // under its MVCC snapshot; for a table-level invariant like this,
+      // the count reflects the latest committed state at statement start.
+      // Combined with the row lock on `id`, this makes the guard correct.)
+      const result = await this.sql<UserWithRole[]>`
+      UPDATE users
+      SET is_admin = ${is_admin}, updated_at = NOW()
+      WHERE id = ${id}
+        AND (
+          ${is_admin} = TRUE
+          OR id <> ${actorId}
+          OR (SELECT COUNT(*) FROM users WHERE is_admin = TRUE) > 1
+        )
+      RETURNING
+        users.id,
+        users.email,
+        users.username,
+        users.display_name,
+        users.avatar_url,
+        users.phone,
+        users.country,
+        users.city,
+        users.verified,
+        users.is_admin,
+        users.created_at,
+        users.updated_at
+    `;
 
-      if (result.length === 0) {
-        throw new Error("کاربر یافت نشد");
+      if (result.length > 0) {
+        logger.info({ targetId: id, actorId, is_admin }, "user role updated");
+        return this.mapToUserWithRole(result[0]);
       }
 
-      logger.info(`Admin role updated for user ${id}: is_admin=${is_admin}`);
-      return this.mapToUserWithRole(result[0]);
+      // Zero rows: either the user doesn't exist, or the guard blocked
+      // a self-demotion of the last admin. Disambiguate for the caller.
+      const exists = await this.sql<{ exists: boolean }[]>`
+      SELECT EXISTS(SELECT 1 FROM users WHERE id = ${id}) AS exists
+    `;
+      if (!exists[0]?.exists) {
+        const err = Object.assign(new Error("کاربر یافت نشد"), {
+          statusCode: 404,
+        });
+        throw err;
+      }
+
+      // The row exists but wasn't updated → guard fired.
+      const err = Object.assign(
+        new Error("نمی‌توانید آخرین ادمین را از دسترسی محروم کنید"),
+        { statusCode: 400, code: "LAST_ADMIN" },
+      );
+      throw err;
     } catch (error) {
-      logger.error(error, `Failed to update user role: ${id}`);
+      logger.error(
+        { err: error, targetId: id, actorId, is_admin },
+        "failed to update user role",
+      );
       throw error;
     }
   }
@@ -370,18 +411,35 @@ export class AdminService {
     }
   }
 
-  async addTicketMessage(ticketId: number, userId: number, message: string) {
+  async addTicketMessage(
+    ticketId: number,
+    userId: number,
+    message: string,
+    role: "user" | "admin" = "user",
+  ) {
     try {
-      const result = await this.sql`
-        INSERT INTO ticket_messages (ticket_id, user_id, message, created_at)
-        VALUES (${ticketId}, ${userId}, ${message}, NOW())
-        RETURNING *
-      `;
+      if (!message || message.trim().length === 0) {
+        // Fastify's schema should already reject this, but defense in depth:
+        // a NULL/empty message violates the intent even if the DB allows it.
+        const err = Object.assign(new Error("message must not be empty"), {
+          statusCode: 400,
+        });
+        throw err;
+      }
 
-      logger.info(`Message added to ticket ${ticketId} by user ${userId}`);
+      const result = await this.sql`
+      INSERT INTO ticket_messages (ticket_id, user_id, message, role, created_at)
+      VALUES (${ticketId}, ${userId}, ${message}, ${role}, NOW())
+      RETURNING *
+    `;
+
+      logger.info({ ticketId, userId, role }, "ticket message added");
       return result[0];
     } catch (error) {
-      logger.error(error, `Failed to add ticket message: ${ticketId}`);
+      logger.error(
+        { err: error, ticketId, userId },
+        "failed to add ticket message",
+      );
       throw error;
     }
   }
@@ -516,12 +574,15 @@ export class AdminService {
       }
 
       if (search) {
-        conditions.push(`(task_name ILIKE ${id} OR description ILIKE ${id} OR module ILIKE ${id})`);
+        conditions.push(
+          `(task_name ILIKE ${id} OR description ILIKE ${id} OR module ILIKE ${id})`,
+        );
         params.push(`%${search}%`);
         id++;
       }
 
-      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+      const whereClause =
+        conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
       const countResult = await this.sql`
         SELECT COUNT(*)::int as total FROM tasks ${whereClause}
@@ -546,7 +607,7 @@ export class AdminService {
         totalPages,
       };
     } catch (error) {
-      logger.error(error, 'Failed to list tasks');
+      logger.error(error, "Failed to list tasks");
       throw error;
     }
   }
@@ -563,7 +624,17 @@ export class AdminService {
 
   async createTask(taskData: any) {
     try {
-      const { task_id, task_name, module, phase, priority, status, dependency, description, data_source } = taskData;
+      const {
+        task_id,
+        task_name,
+        module,
+        phase,
+        priority,
+        status,
+        dependency,
+        description,
+        data_source,
+      } = taskData;
 
       const result = await this.sql`
         INSERT INTO tasks (task_id, task_name, module, phase, priority, status, dependency, description, data_source)
@@ -581,7 +652,16 @@ export class AdminService {
 
   async updateTask(id: number, taskData: any) {
     try {
-      const allowed = ['task_name', 'module', 'phase', 'priority', 'status', 'dependency', 'description', 'data_source'];
+      const allowed = [
+        "task_name",
+        "module",
+        "phase",
+        "priority",
+        "status",
+        "dependency",
+        "description",
+        "data_source",
+      ];
       const updates: Record<string, any> = {};
 
       for (const field of allowed) {
@@ -591,7 +671,7 @@ export class AdminService {
       }
 
       if (Object.keys(updates).length === 0) {
-        throw new Error('هیچ داده‌ای برای به‌روزرسانی وجود ندارد');
+        throw new Error("هیچ داده‌ای برای به‌روزرسانی وجود ندارد");
       }
 
       const result = await this.sql`
@@ -602,7 +682,7 @@ export class AdminService {
       `;
 
       if (result.length === 0) {
-        throw new Error('تسک یافت نشد');
+        throw new Error("تسک یافت نشد");
       }
 
       logger.info(`Task ${id} updated by admin`);
@@ -618,7 +698,7 @@ export class AdminService {
       const result = await this.sql`DELETE FROM tasks WHERE id = ${id}`;
 
       if (result.length === 0) {
-        throw new Error('تسک یافت نشد');
+        throw new Error("تسک یافت نشد");
       }
 
       logger.info(`Task ${id} deleted by admin`);

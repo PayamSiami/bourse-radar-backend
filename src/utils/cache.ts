@@ -66,3 +66,19 @@ export async function getOrSet<T>(
 
   return { data, hit: false };
 }
+
+/** Delete every cache entry whose key starts with `prefix`. */
+export async function invalidate(
+  server: FastifyInstance,
+  prefix: string,
+): Promise<void> {
+  // If you use Redis: use SCAN + UNLINK, or maintain a set of keys per prefix.
+  // If you use an in-memory Map: iterate keys.
+  const cache = (server as any).cache as
+    | { keys: () => Iterable<string>; del: (k: string) => unknown }
+    | undefined;
+  if (!cache) return;
+  for (const k of cache.keys()) {
+    if (k.startsWith(prefix)) cache.del(k);
+  }
+}

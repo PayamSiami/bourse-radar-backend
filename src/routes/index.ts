@@ -21,117 +21,90 @@ type RouteRegistrar = (server: FastifyInstance) => void | Promise<void>;
 interface RouteDefinition {
   name: string;
   register: RouteRegistrar;
-  /** When true, a failure will be logged but not thrown. */
+  /** When true, a failure will be logged but not rethrown IN DEV ONLY. */
   optional?: boolean;
 }
 
 export async function registerRoutes(server: FastifyInstance) {
-  console.log("→ Registering routes");
+  const isProd = process.env.NODE_ENV === "production";
 
-  // Global middleware: add freshness & cache headers to all responses
-  server.addHook("onSend", async (req, reply) => {
+  server.log.info("registering routes");
+
+  // Global response headers. Must RETURN payload — async onSend that
+  // omits the return value silently replaces the body with undefined
+  // in some Fastify versions.
+  server.addHook("onSend", async (req, reply, payload) => {
     const now = Date.now();
-    const timestamp = new Date(now).toISOString();
-    reply.header("X-Server-Timestamp", timestamp);
+    reply.header("X-Server-Timestamp", new Date(now).toISOString());
+    reply.header("X-Server-Time", Math.floor(now / 1000));
     reply.header("X-Request-Id", req.id);
-    reply.header("X-Server-Time", Math.floor(now / 1000).toString());
+    return payload;
   });
 
   const routes: RouteDefinition[] = [
+    { name: "Health",        register: (s) => registerHealthRoute(s) },
+
+    // ── Reference / static list routes FIRST (no param collision) ──
     {
-      name: "Health",
-      register: (s) => registerHealthRoute(s),
+      name: "Sectors",
+      // Static route: /api/sectors  (NO trailing slash)
+      register: (s) => registerSectorsRoutes(s, "/api/sectors"),
     },
     {
-      name: "Auth",
-      register: (s) => registerAuthRoutes(s, "/api/auth"),
+      name: "Sector assets",
+      // Parametric route: /api/sectors/:sector
+      register: (s) => registerSectorAssetsRoutes(s, "/api/sectors"),
+      optional: true,
     },
+    { name: "Stocks",        register: (s) => registerStocksRoutes(s, "/api/stocks") },
+    { name: "Price history", register: (s) => registerPriceHistoryRoutes(s, "/api/prices"), optional: true },
+    { name: "Market-cap series", register: (s) => registerMcapRoutes(s, "/api/mcap-series"), optional: true },
+    { name: "Quarterly",     register: (s) => registerQuarterlyRoutes(s, "/api/quarterly"), optional: true },
+    { name: "Earnings",      register: (s) => registerEarningsRoutes(s, "/api/earnings"), optional: true },
+    { name: "Order book",    register: (s) => registerOrderBookRoutes(s, "/api/orderbook"), optional: true },
+    { name: "Sales trends",  register: (s) => registerSalesTrendsRoutes(s, "/api/sales-trends"), optional: true },
+    { name: "Rankings",      register: (s) => registerRankingsRoutes(s, { prefix: "/api/rankings" }), optional: true },
+    { name: "Suggestions",   register: (s) => registerSuggestionsRoutes(s, "/api/suggestions"), optional: true },
+
+    // ── Auth / user-facing ──
+    { name: "Auth",          register: (s) => registerAuthRoutes(s, "/api/auth") },
+    { name: "Tickets",       register: (s) => registerTicketsRoutes(s, "/api/tickets"), optional: true },
+
+    // ── Admin / ingest (should be required in prod) ──
     {
       name: "Admin",
       register: (s) => registerAdminRoutes(s),
-      optional: true,
-    },
-    {
-      name: "Stocks",
-      register: (s) => registerStocksRoutes(s, "/api/stocks"),
-    },
-    {
-      name: "Rankings",
-      register: (s) => registerRankingsRoutes(s, { prefix: "/api/rankings" }),
-      optional: true,
-    },
-    {
-      name: "Sales trends",
-      register: (s) => registerSalesTrendsRoutes(s, "/api/sales-trends"),
-      optional: true,
-    },
-    {
-      name: "Suggestions",
-      register: (s) => registerSuggestionsRoutes(s, "/api/suggestions"),
-      optional: true,
+      optional: !isProd,
     },
     {
       name: "Admin ingest (localhost only)",
       register: (s) => registerIngestRoutes(s),
-      optional: true,
-    },
-    {
-      name: "Sector assets",
-      register: (s) => registerSectorAssetsRoutes(s, "/api/sectors"),
-      optional: true,
-    },
-    {
-      name: "Sectors",
-      register: (s) => registerSectorsRoutes(s, "/api/sectors"),
-      optional: true,
-    },
-    {
-      name: "Price history",
-      register: (s) => registerPriceHistoryRoutes(s, "/api/prices"),
-      optional: true,
-    },
-    {
-      name: "Market-cap series",
-      register: (s) => registerMcapRoutes(s, "/api/mcap-series"),
-      optional: true,
-    },
-    {
-      name: "Quarterly",
-      register: (s) => registerQuarterlyRoutes(s, "/api/quarterly"),
-      optional: true,
-    },
-    {
-      name: "Earnings",
-      register: (s) => registerEarningsRoutes(s, "/api/earnings"),
-      optional: true,
-    },
-    {
-      name: "Order book",
-      register: (s) => registerOrderBookRoutes(s, "/api/orderbook"),
-      optional: true,
-    },
-    {
-      name: "Tickets",
-      register: (s) => registerTicketsRoutes(s, "/api/tickets"),
-      optional: true,
+      optional: !isProd,
     },
   ];
+
+  // Root info endpoint — registered BEFORE the loop so a failed
+  // registrar can't leave the server without a liveness endpoint.
+  server.get("/", async () => ({
+    name: "Bourse Radar API",
+    version: process.env.npm_package_version ?? "0.1.0",
+    status: "ok",
+  }));
 
   for (const route of routes) {
     try {
       await route.register(server);
-      console.log(`  ✓ ${route.name} routes registered`);
+      server.log.info({ route: route.name }, "routes registered");
     } catch (e) {
-      console.error(`  ✗ ${route.name} routes failed:`, e);
-      if (!route.optional) throw e;
+      server.log.error(
+        { err: e, route: route.name, optional: !!route.optional },
+        "route registration failed",
+      );
+      // In production, ANY failure is a bug and we refuse to boot.
+      // In dev, only optional routes are tolerated.
+      if (isProd || !route.optional) throw e;
     }
   }
 
-  server.get("/", async () => ({
-    name: "Bourse Radar API",
-    version: "0.1.0",
-    status: "ok",
-  }));
-
-  console.log("✓ Routes registered");
+  server.log.info("all routes registered");
 }

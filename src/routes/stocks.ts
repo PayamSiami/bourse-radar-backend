@@ -1,437 +1,382 @@
-import type { FastifyInstance } from "fastify";
-import { z } from "zod";
+// src/routes/stocks.ts
+import type { FastifyInstance, FastifyReply } from "fastify";
+import { getOrSet, invalidate } from "#utils/cache";
+import {
+  StockSchema,
+  StockListQuerySchema,
+  StockCreateBodySchema,
+  StockUpdateBodySchema,
+  StockParamsSchema,
+  ErrorSchema,
+  type StockRow,
+  type StockCreateBody,
+  type StockUpdateBody,
+  type StockListQuery,
+} from "./stocks.schema.js";
+
+// ─── Helpers ────────────────────────────────────────────
 
 /**
- * GET /api/stocks
- * List all TSE symbols with Forward P/E, confidence, and sector.
+ * Codal/Postgres BIGINT comes back as a string from the `pg` driver.
+ * We normalize to number for the JSON response. 2^53 is ~9e15 — far
+ * beyond any realistic share count, so this is safe.
  */
-const QuerySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
-  sector: z.string().optional(),
-  min_confidence: z
-    .enum(["high", "medium", "low", "non_calculable"])
-    .optional(),
-  has_forward_pe: z.coerce.boolean().optional(),
-});
-
-/** Hydrate JSONB columns that the postgres driver returns as raw strings. */
-function parseJsonb<T = any>(v: unknown): T | null {
-  if (v === null || v === undefined) return null;
-  if (typeof v === "string") {
-    try {
-      return JSON.parse(v) as T;
-    } catch {
-      return null;
-    }
-  }
-  return v as T;
+function normalizeStock(r: StockRow) {
+  return {
+    ...r,
+    shares_outstanding:
+      r.shares_outstanding == null ? null : Number(r.shares_outstanding),
+  };
 }
 
-/** Map min_confidence to the list of acceptable confidence levels. */
-function confidenceLevels(
-  min: "high" | "medium" | "low" | "non_calculable" | undefined,
-): string[] | null {
-  if (!min) return null;
-  switch (min) {
-    case "high":
-      return ["high"];
-    case "medium":
-      return ["high", "medium"];
-    case "low":
-      return ["high", "medium", "low"];
-    case "non_calculable":
-      return ["non_calculable"];
-  }
+/**
+ * Map a Postgres unique-violation to a clean 409 body. The stock table has
+ * three unique constraints we care about:
+ *   stocks_pkey            (symbol)
+ *   uq_stocks_isin         (isin, partial)
+ *   uq_stocks_ins_code     (ins_code, partial)
+ */
+function conflictFromPgError(err: unknown): { field: string } | null {
+  const e = err as { code?: string; constraint?: string; detail?: string };
+  if (e?.code !== "23505") return null;
+
+  // `constraint` is the authoritative name. `detail` is a fallback.
+  const c = e.constraint ?? "";
+  if (c === "stocks_pkey") return { field: "symbol" };
+  if (c === "uq_stocks_isin") return { field: "isin" };
+  if (c === "uq_stocks_ins_code") return { field: "ins_code" };
+
+  // Fallback if constraint name was rewritten by a future migration.
+  const d = e.detail ?? "";
+  if (d.includes("(isin)")) return { field: "isin" };
+  if (d.includes("(ins_code)")) return { field: "ins_code" };
+  return { field: "unknown" };
 }
+
+/**
+ * Postgres FK violation on DELETE — the stock is referenced by
+ * prices / monthly_sales / quarterly_financials / forward_pe /
+ * market_cap_history / narrative_cache.
+ */
+function fkRestricted(err: unknown): { table?: string } | null {
+  const e = err as { code?: string; detail?: string; table?: string };
+  if (e?.code !== "23503") return null;
+  // detail looks like: Key (symbol)=(خودرو) is still referenced from table "prices".
+  const m = /referenced from table "([^"]+)"/.exec(e.detail ?? "");
+  return { table: m?.[1] };
+}
+
+function sendConflict(reply: FastifyReply, field: string) {
+  return reply.code(409).send({
+    error: "conflict",
+    message: `A stock with this ${field} already exists`,
+    details: { field },
+  });
+}
+
+function sendNotFound(reply: FastifyReply, symbol: string) {
+  return reply.code(404).send({
+    error: "not_found",
+    message: `Stock '${symbol}' not found`,
+  });
+}
+
+/**
+ * Invalidate every cache that could contain a stock-derived row.
+ * `getOrSet` writes keys like `sectors:list`, `rankings:list`,
+ * `stocks:list:...`. We use a prefix sweep so future list variants
+ * (filters, pagination) are covered without bookkeeping.
+ */
+async function invalidateStockDerivedCaches(server: FastifyInstance) {
+  await Promise.all([
+    invalidate(server, "sectors:"),
+    invalidate(server, "stocks:"),
+    invalidate(server, "rankings:"),
+  ]);
+}
+
+// ─── Route ──────────────────────────────────────────────
 
 export async function registerStocksRoutes(
   server: FastifyInstance,
   prefix: string,
 ) {
-  // GET {prefix}/
-  server.get(
+  // ── LIST ──────────────────────────────────────────────
+  server.get<{ Querystring: StockListQuery }>(
     `${prefix}/`,
     {
       schema: {
         tags: ["stocks"],
-        description: "List all TSE symbols with Forward P/E and confidence",
-        querystring: {
-          type: "object",
-          properties: {
-            page: { type: "integer", minimum: 1, default: 1 },
-            limit: { type: "integer", minimum: 1, maximum: 200, default: 50 },
-            sector: { type: "string" },
-            min_confidence: {
-              type: "string",
-              enum: ["high", "medium", "low", "non_calculable"],
-            },
-            has_forward_pe: { type: "boolean" },
-          },
-        },
-      },
-    },
-    async (req, reply) => {
-      const q = QuerySchema.safeParse(req.query);
-      if (!q.success) {
-        return reply.status(400).send({ error: q.error.flatten() });
-      }
-
-      const offset = (q.data.page - 1) * q.data.limit;
-      const confList = confidenceLevels(q.data.min_confidence);
-
-      // Cache
-      const cacheKey = `stocks:${JSON.stringify(q.data)}`;
-      try {
-        const cached = await server.redis.get(cacheKey);
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          if (Date.now() - parsed._cachedAt < 300_000) {
-            return reply.send(parsed.data);
-          }
-        }
-      } catch (e) {
-        server.log.warn({ err: e }, "stocks list cache read failed");
-      }
-
-      // Query DB — LATERAL ensures exactly one row per symbol per join.
-      const rows = await server.db`
-        SELECT
-          s.symbol, s.name, s.sector,
-          s.shares_outstanding,
-          p.last_price, p.volume, p."timestamp",
-          fp.forward_pe, fp.estimated_annual_eps,
-          fp.confidence, fp.confidence_score,
-          fp.disclaimer,
-          fr.attractiveness_score,
-          fr."rank"
-        FROM stocks s
-        LEFT JOIN LATERAL (
-          SELECT last_price, volume, "timestamp"
-          FROM prices
-          WHERE symbol = s.symbol
-          ORDER BY "timestamp" DESC LIMIT 1
-        ) p ON TRUE
-        LEFT JOIN LATERAL (
-          SELECT forward_pe, estimated_annual_eps, confidence, confidence_score,
-                 disclaimer, calculated_at
-          FROM forward_pe
-          WHERE symbol = s.symbol
-          ORDER BY calculated_at DESC LIMIT 1
-        ) fp ON TRUE
-        LEFT JOIN LATERAL (
-          SELECT attractiveness_score, "rank"
-          FROM stock_rankings
-          WHERE symbol = s.symbol
-          ORDER BY calculated_at DESC LIMIT 1
-        ) fr ON TRUE
-        WHERE (${q.data.sector ? server.db`s.sector = ${q.data.sector}` : server.db`TRUE`})
-          AND (${q.data.has_forward_pe === true ? server.db`fp.forward_pe IS NOT NULL` : server.db`TRUE`})
-          AND (${
-            confList
-              ? server.db`fp.confidence = ANY(${confList})`
-              : server.db`TRUE`
-          })
-        ORDER BY fr.attractiveness_score DESC NULLS LAST
-        LIMIT ${q.data.limit} OFFSET ${offset}
-      `;
-
-      const result = {
-        data: rows,
-        meta: {
-          page: q.data.page,
-          limit: q.data.limit,
-          hasMore: rows.length === q.data.limit,
-        },
-        cachedAt: new Date().toISOString(),
-      };
-
-      try {
-        await server.redis.setex(
-          cacheKey,
-          300,
-          JSON.stringify({ data: result, _cachedAt: Date.now() }),
-        );
-      } catch (e) {
-        server.log.warn({ err: e }, "stocks list cache write failed");
-      }
-
-      return reply.send(result);
-    },
-  );
-
-  // GET /api/stocks/bulk – list by symbols
-  server.get(
-    `${prefix}/bulk`,
-    {
-      schema: {
-        tags: ["stocks"],
-        description: "Batch fetch multiple TSE symbols at once",
-        querystring: {
-          type: "object",
-          properties: {
-            symbols: {
-              type: "string",
-              description: "Comma-separated symbols: فولاد,فخوز,فملی",
-            },
-            page: { type: "integer", minimum: 1, default: 1 },
-            limit: { type: "integer", minimum: 1, maximum: 200, default: 50 },
-            sector: { type: "string" },
-            min_confidence: {
-              type: "string",
-              enum: ["high", "medium", "low", "non_calculable"],
-            },
-            has_forward_pe: { type: "boolean" },
-          },
-        },
+        summary: "List stocks (paginated, filterable)",
+        querystring: StockListQuerySchema,
         response: {
           200: {
             type: "object",
             properties: {
-              data: { type: "array", items: { type: "object" } },
+              data: { type: "array", items: StockSchema },
               meta: {
                 type: "object",
                 properties: {
-                  page: { type: "integer" },
-                  limit: { type: "integer" },
-                  hasMore: { type: "boolean" },
-                  count: { type: "integer" },
+                  total: { type: "number" },
+                  limit: { type: "number" },
+                  offset: { type: "number" },
                 },
               },
-              cachedAt: { type: "string" },
             },
           },
         },
       },
     },
-    async (req: any, reply: any) => {
-      const q = QuerySchema.safeParse(req.query);
-      if (!q.success) {
-        return reply.status(400).send({ error: q.error.flatten() });
-      }
+    async (req, reply) => {
+      const q = req.query;
+      // Cache key MUST encode every input that changes the result.
+      const cacheKey =
+        `stocks:list:${JSON.stringify({
+          q: q.q ?? null,
+          sector: q.sector ?? null,
+          industry_group: q.industry_group ?? null,
+          is_bank: q.is_bank ?? null,
+          is_insurance: q.is_insurance ?? null,
+          is_holding_company: q.is_holding_company ?? null,
+          limit: q.limit,
+          offset: q.offset,
+        })}`;
 
-      const symbols = req.query.symbols
-        ? (req.query.symbols as string)
-            .split(",")
-            .map((s: string) => s.trim().toUpperCase())
-        : [];
-      if (!Array.isArray(symbols) || symbols.length === 0) {
-        return reply.status(400).send({
-          error: "symbols param is required and should be comma-separated",
-        });
-      }
+      const { data, hit } = await getOrSet(server, cacheKey, 60, async () => {
+        // Build dynamic WHERE via the tagged-template `db` helper.
+        // `sql` fragments keep identifiers safe; values are parameterized.
+        const rows = await server.db<StockRow[]>`
+          SELECT *
+          FROM stocks
+          WHERE (${q.q ?? null}::text IS NULL
+                 OR symbol ILIKE '%' || ${q.q ?? ""} || '%'
+                 OR name ILIKE '%' || ${q.q ?? ""} || '%'
+                 OR name_en ILIKE '%' || ${q.q ?? ""} || '%')
+            AND (${q.sector ?? null}::text IS NULL OR sector = ${q.sector ?? null})
+            AND (${q.industry_group ?? null}::text IS NULL OR industry_group = ${q.industry_group ?? null})
+            AND (${q.is_bank ?? null}::boolean IS NULL OR is_bank = ${q.is_bank ?? null})
+            AND (${q.is_insurance ?? null}::boolean IS NULL OR is_insurance = ${q.is_insurance ?? null})
+            AND (${q.is_holding_company ?? null}::boolean IS NULL OR is_holding_company = ${q.is_holding_company ?? null})
+          ORDER BY symbol ASC
+          LIMIT ${q.limit}
+          OFFSET ${q.offset}
+        `;
 
-      const offset = (q.data.page - 1) * q.data.limit;
-      const confList = confidenceLevels(q.data.min_confidence);
+        const countRows = await server.db<{ count: number }[]>`
+          SELECT COUNT(*)::int AS count
+          FROM stocks
+          WHERE (${q.q ?? null}::text IS NULL
+                 OR symbol ILIKE '%' || ${q.q ?? ""} || '%'
+                 OR name ILIKE '%' || ${q.q ?? ""} || '%'
+                 OR name_en ILIKE '%' || ${q.q ?? ""} || '%')
+            AND (${q.sector ?? null}::text IS NULL OR sector = ${q.sector ?? null})
+            AND (${q.industry_group ?? null}::text IS NULL OR industry_group = ${q.industry_group ?? null})
+            AND (${q.is_bank ?? null}::boolean IS NULL OR is_bank = ${q.is_bank ?? null})
+            AND (${q.is_insurance ?? null}::boolean IS NULL OR is_insurance = ${q.is_insurance ?? null})
+            AND (${q.is_holding_company ?? null}::boolean IS NULL OR is_holding_company = ${q.is_holding_company ?? null})
+        `;
 
-      // Use a dynamic cache key that includes the symbols list
-      const cacheKey = `stocks:bulk:${symbols.join(",")}:${q.data.limit}`;
-      try {
-        const cached = await server.redis.get(cacheKey);
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          if (Date.now() - parsed._cachedAt < 300_000) {
-            return reply.send(parsed.data);
-          }
-        }
-      } catch (e) {
-        server.log.warn({ err: e }, "stocks bulk cache read failed");
-      }
+        return {
+          data: rows.map(normalizeStock),
+          meta: {
+            total: countRows[0]?.count ?? 0,
+            limit: q.limit,
+            offset: q.offset,
+          },
+        };
+      });
 
-      // Query DB with symbols filter using ANY()
-      const rows = await server.db`
-        SELECT
-          s.symbol, s.name, s.sector,
-          s.shares_outstanding,
-          p.last_price, p.volume, p."timestamp",
-          fp.forward_pe, fp.estimated_annual_eps,
-          fp.confidence, fp.confidence_score,
-          fp.disclaimer,
-          fr.attractiveness_score,
-          fr."rank"
-        FROM stocks s
-        JOIN LATERAL (
-          SELECT last_price, volume, "timestamp"
-          FROM prices
-          WHERE symbol = s.symbol
-          ORDER BY "timestamp" DESC LIMIT 1
-        ) p ON TRUE
-        LEFT JOIN LATERAL (
-          SELECT forward_pe, estimated_annual_eps, confidence, confidence_score,
-                 disclaimer, calculated_at
-          FROM forward_pe
-          WHERE symbol = s.symbol
-          ORDER BY calculated_at DESC LIMIT 1
-        ) fp ON TRUE
-        LEFT JOIN LATERAL (
-          SELECT attractiveness_score, "rank"
-          FROM stock_rankings
-          WHERE symbol = s.symbol
-          ORDER BY calculated_at DESC LIMIT 1
-        ) fr ON TRUE
-        WHERE s.symbol = ANY(${symbols})
-          AND (${q.data.sector ? server.db`s.sector = ${q.data.sector}` : server.db`TRUE`})
-          AND (${q.data.has_forward_pe === true ? server.db`fp.forward_pe IS NOT NULL` : server.db`TRUE`})
-          AND (${
-            confList
-              ? server.db`fp.confidence = ANY(${confList})`
-              : server.db`TRUE`
-          })
-        ORDER BY fr.attractiveness_score DESC NULLS LAST
-        LIMIT ${q.data.limit} OFFSET ${offset}
-      `;
-
-      const result = {
-        data: rows,
-        meta: {
-          page: q.data.page,
-          limit: q.data.limit,
-          hasMore: rows.length === q.data.limit,
-          count: rows.length,
-          symbols: symbols,
-        },
-        cachedAt: new Date().toISOString(),
-      };
-
-      try {
-        await server.redis.setex(
-          cacheKey,
-          300,
-          JSON.stringify({ data: result, _cachedAt: Date.now() }),
-        );
-      } catch (e) {
-        server.log.warn({ err: e }, "stocks bulk cache write failed");
-      }
-
-      return reply.send(result);
+      reply.header("x-cache", hit ? "HIT" : "MISS");
+      return reply.send(data);
     },
   );
 
-  // GET {prefix}/:symbol
-  server.get(
+  // ── GET ONE ───────────────────────────────────────────
+  server.get<{ Params: { symbol: string } }>(
     `${prefix}/:symbol`,
     {
       schema: {
         tags: ["stocks"],
-        description: "Detailed data for a single symbol",
-        params: {
-          type: "object",
-          properties: {
-            symbol: { type: "string", minLength: 2, maxLength: 10 },
-          },
+        summary: "Get a single stock by symbol",
+        params: StockParamsSchema,
+        response: { 200: StockSchema, 404: ErrorSchema },
+      },
+    },
+    async (req, reply) => {
+      const { symbol } = req.params;
+      const cacheKey = `stocks:one:${symbol}`;
+
+      const { data, hit } = await getOrSet(server, cacheKey, 60, async () => {
+        const rows = await server.db<StockRow[]>`
+          SELECT * FROM stocks WHERE symbol = ${symbol} LIMIT 1
+        `;
+        return rows[0] ? normalizeStock(rows[0]) : null;
+      });
+
+      reply.header("x-cache", hit ? "HIT" : "MISS");
+      if (!data) return sendNotFound(reply, symbol);
+      return reply.send(data);
+    },
+  );
+
+  // ── CREATE ────────────────────────────────────────────
+  server.post<{ Body: StockCreateBody }>(
+    `${prefix}/`,
+    {
+      schema: {
+        tags: ["stocks"],
+        summary: "Create a stock",
+        body: StockCreateBodySchema,
+        response: {
+          201: StockSchema,
+          409: ErrorSchema,
         },
       },
     },
     async (req, reply) => {
-      const { symbol } = req.params as { symbol: string };
-      const cacheKey = `stock_detail:${symbol.toUpperCase()}`;
+      const b = req.body;
 
       try {
-        const cached = await server.redis.get(cacheKey);
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          if (Date.now() - parsed._cachedAt < 600_000) {
-            return reply.send(parsed.data);
-          }
+        const rows = await server.db<StockRow[]>`
+          INSERT INTO stocks (
+            symbol, name, name_en, sector, industry_group,
+            isin, ins_code, shares_outstanding,
+            is_bank, is_insurance, is_holding_company
+          ) VALUES (
+            ${b.symbol},
+            ${b.name},
+            ${b.name_en ?? null},
+            ${b.sector ?? null},
+            ${b.industry_group ?? null},
+            ${b.isin ?? null},
+            ${b.ins_code ?? null},
+            ${b.shares_outstanding ?? null},
+            ${b.is_bank ?? false},
+            ${b.is_insurance ?? false},
+            ${b.is_holding_company ?? false}
+          )
+          RETURNING *
+        `;
+
+        await invalidateStockDerivedCaches(server);
+
+        reply.code(201);
+        return reply.send(normalizeStock(rows[0]!));
+      } catch (err) {
+        const conflict = conflictFromPgError(err);
+        if (conflict) return sendConflict(reply, conflict.field);
+        throw err;
+      }
+    },
+  );
+
+  // ── UPDATE (PATCH semantics) ──────────────────────────
+  server.patch<{ Params: { symbol: string }; Body: StockUpdateBody }>(
+    `${prefix}/:symbol`,
+    {
+      schema: {
+        tags: ["stocks"],
+        summary: "Partially update a stock",
+        description:
+          "Only the fields provided are updated. `symbol` is immutable.",
+        params: StockParamsSchema,
+        body: StockUpdateBodySchema,
+        response: { 200: StockSchema, 404: ErrorSchema, 409: ErrorSchema },
+      },
+    },
+    async (req, reply) => {
+      const { symbol } = req.params;
+      const b = req.body;
+
+      // Build the SET fragment from only the provided keys. We can't use
+      // a plain tagged template here because the column list is dynamic;
+      // postgres-js's `sql(rows)` helper handles this safely.
+      const sets: Record<string, unknown> = {};
+      if (b.name !== undefined) sets.name = b.name;
+      if (b.name_en !== undefined) sets.name_en = b.name_en;
+      if (b.sector !== undefined) sets.sector = b.sector;
+      if (b.industry_group !== undefined) sets.industry_group = b.industry_group;
+      if (b.isin !== undefined) sets.isin = b.isin;
+      if (b.ins_code !== undefined) sets.ins_code = b.ins_code;
+      if (b.shares_outstanding !== undefined)
+        sets.shares_outstanding = b.shares_outstanding;
+      if (b.is_bank !== undefined) sets.is_bank = b.is_bank;
+      if (b.is_insurance !== undefined) sets.is_insurance = b.is_insurance;
+      if (b.is_holding_company !== undefined)
+        sets.is_holding_company = b.is_holding_company;
+
+      // `minProperties: 1` in the schema guarantees this is non-empty,
+      // but guard anyway in case the schema is ever weakened.
+      if (Object.keys(sets).length === 0) {
+        return reply.code(400).send({
+          error: "bad_request",
+          message: "No updatable fields provided",
+        });
+      }
+
+      try {
+        const rows = await server.db<StockRow[]>`
+          UPDATE stocks
+          SET ${server.db(sets)}
+          WHERE symbol = ${symbol}
+          RETURNING *
+        `;
+
+        if (rows.length === 0) return sendNotFound(reply, symbol);
+
+        await invalidateStockDerivedCaches(server);
+        return reply.send(normalizeStock(rows[0]!));
+      } catch (err) {
+        const conflict = conflictFromPgError(err);
+        if (conflict) return sendConflict(reply, conflict.field);
+        throw err;
+      }
+    },
+  );
+
+  // ── DELETE ────────────────────────────────────────────
+  server.delete<{ Params: { symbol: string } }>(
+    `${prefix}/:symbol`,
+    {
+      schema: {
+        tags: ["stocks"],
+        summary: "Delete a stock",
+        description:
+          "Fails with 409 if the stock is referenced by any historical " +
+          "time-series (prices, monthly_sales, quarterly_financials, " +
+          "forward_pe, market_cap_history, narrative_cache).",
+        params: StockParamsSchema,
+        response: {
+          204: { type: "null" },
+          404: ErrorSchema,
+          409: ErrorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const { symbol } = req.params;
+
+      try {
+        const rows = await server.db<{ symbol: string }[]>`
+          DELETE FROM stocks WHERE symbol = ${symbol} RETURNING symbol
+        `;
+        if (rows.length === 0) return sendNotFound(reply, symbol);
+
+        await invalidateStockDerivedCaches(server);
+        return reply.code(204).send();
+      } catch (err) {
+        const fk = fkRestricted(err);
+        if (fk) {
+          return reply.code(409).send({
+            error: "conflict",
+            message:
+              `Cannot delete '${symbol}': it is still referenced by ` +
+              `'${fk.table ?? "other tables"}'.`,
+            details: { referenced_by: fk.table ?? null },
+          });
         }
-      } catch (e) {
-        server.log.warn({ err: e }, "stock detail cache read failed");
+        throw err;
       }
-
-      const [stockRow, priceRow, peRow, salesRows] = await Promise.all([
-        server.db`SELECT * FROM stocks WHERE symbol = ${symbol}`.then(
-          (r) => r[0],
-        ),
-        server.db`
-          SELECT * FROM prices WHERE symbol = ${symbol}
-          ORDER BY timestamp DESC LIMIT 1
-        `.then((r) => r[0]),
-        server.db`
-          SELECT * FROM forward_pe WHERE symbol = ${symbol}
-          ORDER BY calculated_at DESC LIMIT 1
-        `.then((r) => r[0]),
-        server.db`
-          SELECT month_end, sales_amount, is_estimated, source_url, fetched_at, detail
-          FROM monthly_sales WHERE symbol = ${symbol}
-          ORDER BY month_end DESC LIMIT 6
-        `,
-      ]);
-
-      if (!stockRow) {
-        return reply.status(404).send({ error: `Symbol ${symbol} not found` });
-      }
-
-      const result = {
-        symbol: stockRow.symbol,
-        name: stockRow.name,
-        nameEn: stockRow.name_en,
-        sector: stockRow.sector,
-        isin: stockRow.isin,
-        isBank: stockRow.is_bank,
-        isInsurance: stockRow.is_insurance,
-        isHoldingCompany: stockRow.is_holding_company,
-        sharesOutstanding: stockRow.shares_outstanding,
-        price: priceRow
-          ? {
-              last: Number(priceRow.last_price),
-              open: Number(priceRow.open_price),
-              high: Number(priceRow.high_price),
-              low: Number(priceRow.low_price),
-              volume: Number(priceRow.volume),
-              value: Number(priceRow.value),
-              timestamp: priceRow.timestamp,
-              isStale:
-                Date.now() - new Date(priceRow.timestamp).getTime() > 300_000,
-            }
-          : null,
-        forwardPe: peRow
-          ? {
-              forwardPe: peRow.forward_pe ? Number(peRow.forward_pe) : null,
-              estimatedAnnualEps: peRow.estimated_annual_eps
-                ? Number(peRow.estimated_annual_eps)
-                : null,
-              confidence: peRow.confidence,
-              confidenceScore: Number(peRow.confidence_score),
-              method: peRow.method,
-              sources: parseJsonb<Record<string, unknown>>(
-                peRow.calculation_json,
-              ),
-              disclaimer: peRow.disclaimer,
-            }
-          : null,
-        salesHistory: (salesRows || []).map((r: any) => {
-          const d = parseJsonb<any>(r.detail);
-          // `Number(null)` is 0, which read as "no sales that month". These
-          // fields are absent (row 16 missing) for some Codal reports, and
-          // the honest value then is null, not 0.
-          const numField = (v: unknown) => (v == null ? null : Number(v));
-          return {
-            monthEnd: r.month_end,
-            salesAmount: Number(r.sales_amount),
-            isEstimated: !!r.is_estimated,
-            sourceUrl: r.source_url,
-            fetchedAt: r.fetched_at,
-            ytdSalesTotal: d ? numField(d.ytdSalesTotal) : null,
-            priorYtdSalesTotal: d ? numField(d.priorYtdSalesTotal) : null,
-            domesticMonthly: d ? numField(d.domesticMonthly) : null,
-            exportMonthly: d ? numField(d.exportMonthly) : null,
-            productCount: d ? (Array.isArray(d.goods) ? d.goods.length : 0) : 0,
-            detail: d,
-          };
-        }),
-      };
-
-      try {
-        await server.redis.setex(
-          cacheKey,
-          600,
-          JSON.stringify({ data: result, _cachedAt: Date.now() }),
-        );
-      } catch (e) {
-        server.log.warn({ err: e }, "stock detail cache write failed");
-      }
-
-      return reply.send(result);
     },
   );
 }

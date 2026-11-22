@@ -13,6 +13,7 @@ import Fastify from "fastify";
 import { config } from "#config";
 import { registerPlugins } from "#plugins/index";
 import { registerRoutes } from "#routes/index";
+import { registerAdminJS } from "#adminjs";
 import { initializeJobs } from "#jobs/index";
 import { runMigrations } from "#db/migrate";
 
@@ -77,6 +78,9 @@ async function main() {
   }
 
   const server = await buildServer();
+
+  // Register AdminJS dashboard
+  await registerAdminJS(server);
 
   try {
     await server.listen({ port: config.app.port, host: "0.0.0.0" });
