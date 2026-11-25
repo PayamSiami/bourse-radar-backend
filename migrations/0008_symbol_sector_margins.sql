@@ -3,8 +3,8 @@
 
 CREATE TABLE IF NOT EXISTS symbol_sector_margins (
   id SERIAL PRIMARY KEY,
-  symbol VARCHAR(20) NOT NULL,
-  sector VARCHAR(100) NOT NULL,
+  -- TEXT so it can reference stocks.symbol (see 0010).
+  symbol TEXT NOT NULL REFERENCES stocks(symbol) ON UPDATE CASCADE ON DELETE RESTRICT,
   profit_margin NUMERIC(5,2) NOT NULL DEFAULT 0,
   effective_from DATE NOT NULL DEFAULT CURRENT_DATE,
   effective_to DATE,
