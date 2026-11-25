@@ -50,14 +50,14 @@ async function authenticate(
   if (
     !email ||
     !password ||
-    email.trim().toLowerCase() !== ADMIN_EMAIL.trim().toLowerCase()
+    email.trim().toLowerCase() !== ADMIN_EMAIL!.trim().toLowerCase()
   ) {
     return null;
   }
 
   try {
     const valid = await argon2.verify(
-      ADMIN_PASSWORD_HASH,
+      ADMIN_PASSWORD_HASH!,
       password,
     );
 
@@ -334,7 +334,7 @@ function buildResources(db: any) {
 // --------------------------------------------------
 
 export async function registerAdmin(app: FastifyInstance) {
-  const databaseUrl = new URL(DATABASE_URL);
+  const databaseUrl = new URL(DATABASE_URL!);
 
   const databaseName = decodeURIComponent(
     databaseUrl.pathname.replace(/^\//, ""),
@@ -383,13 +383,13 @@ export async function registerAdmin(app: FastifyInstance) {
       authenticate,
 
       cookieName: "bourse-radar-admin",
-      cookiePassword: ADMIN_COOKIE_SECRET,
+      cookiePassword: ADMIN_COOKIE_SECRET!,
     },
     app,
     {
       store: sessionStore as any,
 
-      secret: ADMIN_COOKIE_SECRET,
+      secret: ADMIN_COOKIE_SECRET!,
 
       saveUninitialized: false,
 

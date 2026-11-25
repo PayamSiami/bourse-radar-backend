@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { AdminService } from "#services/admin";
 import { adminMiddleware } from "#middleware/admin";
 import { createAuthMiddleware } from "#middleware/auth";
@@ -41,15 +41,6 @@ const SymbolParam = {
   type: "object",
   required: ["symbol"],
   properties: { symbol: { type: "string", minLength: 1, maxLength: 64 } },
-} as const;
-
-const PaginationQuery = {
-  type: "object",
-  properties: {
-    page: { type: "integer", minimum: 1, default: 1 },
-    pageSize: { type: "integer", minimum: 1, maximum: 100, default: 20 },
-  },
-  additionalProperties: true, // allow route-specific extras
 } as const;
 
 // ─── Route module ───────────────────────────────────────
