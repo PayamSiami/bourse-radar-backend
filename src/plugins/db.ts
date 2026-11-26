@@ -14,10 +14,15 @@ declare module "fastify" {
 }
 
 export async function registerDb(server: FastifyInstance) {
+  // Disable SSL in production so pg-pool doesn't attempt TLS if the target
+  // PostgreSQL doesn't serve it (common on VPS / managed DB setups).
+  const ssl = process.env.NODE_ENV === "production" ? false : undefined;
+
   const sql = postgres(config.db.url, {
     max: 20,           // connection pool size
     idle_timeout: 30,
     connect_timeout: 10,
+    ssl,
     // `on.notice` is a postgres v3 runtime feature not yet in the TS types;
     // we attach it via a cast to avoid a typecheck error that would block prod builds.
     ...(process.env.NODE_ENV === "development"

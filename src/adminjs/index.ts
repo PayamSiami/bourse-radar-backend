@@ -60,10 +60,9 @@ function buildSessionStore(databaseUrl: string) {
   const pgStore = new ConnectSession({
     conObject: {
       connectionString: databaseUrl,
-      ssl:
-        process.env.NODE_ENV === "production"
-          ? { rejectUnauthorized: false }
-          : false,
+      // Disable SSL in production if the target PostgreSQL does not support it.
+      // Many VPS / managed Postgres setups don't serve TLS on the default port.
+      ssl: process.env.NODE_ENV === "production" ? false : undefined,
     },
     tableName: "admin_sessions",
     createTableIfMissing: true,
