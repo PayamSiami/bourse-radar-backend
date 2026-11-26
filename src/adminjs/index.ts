@@ -13,7 +13,7 @@ import type { FastifyInstance } from "fastify";
 import FastifySession from "@fastify/session";
 import Connect from "connect-pg-simple";
 
-import argon2 from "argon2";
+import { timingSafeEqual } from "node:crypto";
 
 import { buildAdminResources } from "./resources.js";
 import { closeAdminPool } from "./pool.js";
@@ -193,14 +193,14 @@ export async function registerAdminJS(app: FastifyInstance) {
   }
 
   // --- 4. Authentication against env credentials ---
-  // Production login is ADMIN_EMAIL + ADMIN_PASSWORD_HASH (argon2id).
-  // This does not depend on a users-table row or bcrypt.
+  // Login is ADMIN_EMAIL + ADMIN_PASSWORD. Production does not ship a
+  // precomputed hash, and a stale hash makes the panel fail only there.
   const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
-  const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
+  const adminPassword = process.env.ADMIN_PASSWORD ?? "";
 
-  if (!adminEmail || !adminPasswordHash) {
+  if (!adminEmail || !adminPassword) {
     app.log.error(
-      "AdminJS skipped: ADMIN_EMAIL and ADMIN_PASSWORD_HASH are required",
+      "AdminJS skipped: ADMIN_EMAIL and ADMIN_PASSWORD are required",
     );
     return null;
   }
@@ -209,14 +209,13 @@ export async function registerAdminJS(app: FastifyInstance) {
     if (!email || !password) return null;
     if (email.trim().toLowerCase() !== adminEmail) return null;
 
-    try {
-      const valid = await argon2.verify(adminPasswordHash, password);
-      if (!valid) return null;
-      return { email: adminEmail, role: "admin" };
-    } catch (err) {
-      app.log.error({ err }, "AdminJS argon2 verification failed");
-      return null;
-    }
+    const given = Buffer.from(password);
+    const expected = Buffer.from(adminPassword);
+    const valid =
+      given.length === expected.length && timingSafeEqual(given, expected);
+    if (!valid) return null;
+
+    return { email: adminEmail, role: "admin" };
   };
 
   // --- 5. Mount the authenticated router ---
@@ -235,8 +234,12 @@ export async function registerAdminJS(app: FastifyInstance) {
         secret: getSessionSecret(),
         cookie: {
           httpOnly: true,
-          secure: process.env.NODE_ENV === "production",
+          // "auto" sets Secure only on HTTPS. A hard true drops the cookie
+          // when production is reached over http or the proxy omits
+          // X-Forwarded-Proto, so login succeeds and immediately bounces.
+          secure: "auto",
           sameSite: "lax",
+          path: "/",
           maxAge: 1000 * 60 * 60 * 8, // 8 hours
         },
       },
