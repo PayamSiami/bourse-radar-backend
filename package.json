@@ -45,8 +45,10 @@
   "dependencies": {
     "@adminjs/fastify": "^4.2.0",
     "@adminjs/sql": "^2.2.6",
+    "@fastify/cookie": "^11.1.5",
     "@fastify/cors": "^11.0.0",
     "@fastify/error": "^4.2.0",
+    "@fastify/formbody": "^9.0.2",
     "@fastify/rate-limit": "^11.2.0",
     "@fastify/session": "^11.2.1",
     "@fastify/swagger": "^9.0.0",
