@@ -1199,26 +1199,22 @@ export async function syncMarketCapHistory(sql: PostgresDb): Promise<number> {
   for (const row of snapshots) {
     const price = Number(row.last_price);
     const shares = Number(row.shares_outstanding!);
-    const mcapRial = price * shares;
     const dateStr = row.date.toISOString().slice(0, 10);
 
     const fxRate = await getFxRateForDate(sql, dateStr).catch(() => null);
     const rateRial = fxRate?.rateRial ?? null;
-    const mcapUsd = rateRial && rateRial > 0 ? mcapRial / rateRial : null;
 
     await sql`
-      INSERT INTO market_cap_history (symbol, date, price_rial, shares_count, mcap_rial, mcap_usd,
+      INSERT INTO market_cap_history (symbol, date, price_rial, shares_count,
                                       fx_rate_rial, fx_quality, fx_sources, source)
       VALUES (
-        ${row.symbol}, ${dateStr}::date, ${price}, ${shares}, ${mcapRial}, ${mcapUsd},
+        ${row.symbol}, ${dateStr}::date, ${price}, ${shares},
         ${rateRial}, ${fxRate?.quality ?? null},
         ${fxRate ? Array.from(fxRate.sources) : null},
         'tsetmc_fx'
       )
       ON CONFLICT (symbol, date) DO UPDATE SET
         price_rial   = EXCLUDED.price_rial,
-        mcap_rial    = EXCLUDED.mcap_rial,
-        mcap_usd     = EXCLUDED.mcap_usd,
         fx_rate_rial = EXCLUDED.fx_rate_rial,
         fx_quality   = EXCLUDED.fx_quality,
         fx_sources   = EXCLUDED.fx_sources,
