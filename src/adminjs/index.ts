@@ -1,11 +1,6 @@
 /**
  * AdminJS Integration for Bourse Radar API
- *
- * Mounts the AdminJS dashboard on the Fastify server at /admin.
- * Resources come from PostgreSQL via @adminjs/sql.
- *
- * IMPORTANT: @adminjs/fastify requires @fastify/cookie + @fastify/session
- * to be registered BEFORE buildRouter(), otherwise /admin is not mounted.
+ * Mounts the AdminJS dashboard at /admin with session-based authentication.
  */
 
 import AdminJS from "adminjs";
@@ -13,11 +8,14 @@ import AdminJSFastify from "@adminjs/fastify";
 import { Adapter, Database, Resource } from "@adminjs/sql";
 import type { FastifyInstance } from "fastify";
 
-import cookie from "@fastify/cookie";
-import session from "@fastify/session";
-import formbody from "@fastify/formbody";
+// Session store: use fastify-session + connect-pg-simple
+// connect-pg-simple v10 can work with fastify-session via the Connect adapter
+import FastifySession from "@fastify/session";
+import Connect from "connect-pg-simple";
 
 import { buildAdminResources } from "./resources.js";
+import { getAdminPool, closeAdminPool } from "./pool.js";
+import { compare } from "bcrypt";
 
 let adapterRegistered = false;
 
@@ -27,9 +25,6 @@ function registerAdapter() {
   adapterRegistered = true;
 }
 
-/**
- * Returns the session secret, or throws in production if it is missing.
- */
 function getSessionSecret(): string {
   const secret = process.env.ADMINJS_SESSION_SECRET;
   const isProd = process.env.NODE_ENV === "production";
@@ -40,41 +35,73 @@ function getSessionSecret(): string {
         "ADMINJS_SESSION_SECRET must be set in production (>= 32 chars).",
       );
     }
-    // Dev-only fallback — never use in production.
     return "dev-only-insecure-secret-change-me-please-32";
   }
-
   if (isProd && secret.length < 32) {
     throw new Error("ADMINJS_SESSION_SECRET must be at least 32 characters.");
   }
-
   return secret;
 }
 
 /**
- * Register the Fastify plugins AdminJS depends on.
- * Idempotent via a symbol on the instance.
+ * Creates a PostgreSQL-backed session store compatible with @fastify/session.
+ *
+ * @fastify/session requires a store with:
+ *   - get(sessionId, callback)
+ *   - set(sessionId, session, callback)
+ *   - destroy(sessionId, callback)
+ *   - compareAndSet(sessionId, expectedGeneration, session, callback)
+ *
+ * connect-pg-simple's store does not implement compareAndSet, so we wrap it.
  */
-async function ensureAdminPlugins(app: FastifyInstance) {
-  const key = Symbol.for("adminjs.plugins.registered");
-  if ((app as any)[key]) return;
-  (app as any)[key] = true;
-
-  await app.register(cookie);
-
-  await app.register(session, {
-    secret: getSessionSecret(),
-    cookieName: "adminjs",
-    cookie: {
-      // `secure: true` requires HTTPS AND trustProxy enabled on Fastify.
-      secure: process.env.NODE_ENV === "production",
-      httpOnly: true,
-      sameSite: "lax",
-      maxAge: 1000 * 60 * 60 * 8, // 8 hours
+function buildSessionStore(databaseUrl: string) {
+  const ConnectSession = Connect(FastifySession as any);
+  const pgStore = new ConnectSession({
+    conObject: {
+      connectionString: databaseUrl,
+      ssl:
+        process.env.NODE_ENV === "production"
+          ? { rejectUnauthorized: false }
+          : false,
     },
+    tableName: "admin_sessions",
+    createTableIfMissing: true,
   });
 
-  await app.register(formbody);
+  // Wrap so @fastify/session's required compareAndSet exists.
+  // Generation is stored on the session object by @fastify/session itself;
+  // we only need to expose the method. A simple implementation: load, compare
+  // generation if present, then set.
+  const wrapped: any = {
+    get(sessionId: string, callback: (err: Error | null, session?: any) => void) {
+      pgStore.get(sessionId, callback);
+    },
+    set(sessionId: string, session: any, callback: (err?: Error | null) => void) {
+      pgStore.set(sessionId, session, callback);
+    },
+    destroy(sessionId: string, callback: (err?: Error | null) => void) {
+      pgStore.destroy(sessionId, callback);
+    },
+    compareAndSet(
+      sessionId: string,
+      expectedGeneration: number,
+      session: any,
+      callback: (err?: Error | null) => void,
+    ) {
+      pgStore.get(sessionId, (err: Error | null, stored: any) => {
+        if (err) return callback(err);
+        const storedGeneration = stored?.cookie?.generation ?? stored?.generation;
+        if (stored && storedGeneration !== undefined && storedGeneration !== expectedGeneration) {
+          const error = new Error("The session does not exist or has changed");
+          (error as any).code = "ENOENT";
+          return callback(error);
+        }
+        pgStore.set(sessionId, session, callback);
+      });
+    },
+  };
+
+  return wrapped as any;
 }
 
 export async function registerAdminJS(app: FastifyInstance) {
@@ -85,18 +112,7 @@ export async function registerAdminJS(app: FastifyInstance) {
     return null;
   }
 
-  // --- 1. Register required Fastify plugins FIRST -------------------------
-  try {
-    await ensureAdminPlugins(app);
-  } catch (err) {
-    app.log.error(
-      { err },
-      "AdminJS skipped: failed to register session plugins",
-    );
-    return null;
-  }
-
-  // --- 2. Register the AdminJS SQL adapter --------------------------------
+  // --- 1. Register the AdminJS SQL adapter ---
   registerAdapter();
 
   let databaseName: string;
@@ -116,17 +132,9 @@ export async function registerAdminJS(app: FastifyInstance) {
 
   let db: Awaited<ReturnType<Adapter["init"]>>;
   try {
-    // Determine SSL config: use connection string's SSL params if present,
-    // otherwise disable SSL in development, enable with default settings in production.
-    // Note: pg accepts `ssl: boolean | tls.ConnectionOptions`.
-    // For self-signed certs in production, set PGSSLROOTCERT or use a proper TLS config.
-    // const isProd = process.env.NODE_ENV === "production";
-    // const sslConfig = isProd ? true : false;
-
     db = await new Adapter("postgresql", {
       connectionString: databaseUrl,
       database: databaseName,
-      // ssl: sslConfig,
     }).init();
     app.log.info("AdminJS DB adapter connected");
   } catch (err) {
@@ -134,7 +142,7 @@ export async function registerAdminJS(app: FastifyInstance) {
     return null;
   }
 
-  // --- 3. Build AdminJS instance -----------------------------------------
+  // --- 2. Build AdminJS instance ---
   let admin: AdminJS;
   try {
     admin = new AdminJS({
@@ -154,14 +162,85 @@ export async function registerAdminJS(app: FastifyInstance) {
     admin.watch();
   }
 
-  // --- 4. Mount the router -----------------------------------------------
+  // --- 3. Setup session store ---
+  let sessionStore;
   try {
-    await AdminJSFastify.buildRouter(admin, app);
+    sessionStore = buildSessionStore(databaseUrl);
+
+    // Verify store has required .get method
+    if (typeof sessionStore.get !== "function") {
+      app.log.error(
+        "AdminJS session store missing .get method — cannot proceed",
+      );
+      return null;
+    }
   } catch (err) {
-    app.log.error({ err }, "AdminJS skipped: buildRouter failed");
+    app.log.error({ err }, "AdminJS skipped: failed to build session store");
     return null;
   }
 
-  app.log.info("AdminJS registered at /admin");
+  // --- 4. Authentication against the users table ---
+  // Your schema (0003_users_auth.sql) has: email, password_hash.
+  // There is no `is_admin` column, so we check an env allow-list instead.
+  const adminEmails = (process.env.ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+
+  const authenticate = async (email: string, password: string) => {
+    // Optional: restrict to allow-listed emails
+    if (adminEmails.length > 0) {
+      if (!adminEmails.includes(email.toLowerCase())) {
+        return null;
+      }
+    }
+
+    const result = await getAdminPool().query(
+      `SELECT id, email, password_hash FROM users WHERE email = $1 LIMIT 1`,
+      [email],
+    );
+
+    const user = result.rows[0];
+    if (!user) return null;
+
+    // Compare password using bcrypt
+    const valid = await compare(password, user.password_hash);
+    if (!valid) return null;
+
+    return { email: user.email, id: user.id };
+  };
+
+  // --- 5. Mount the authenticated router ---
+  try {
+    await AdminJSFastify.buildAuthenticatedRouter(
+      admin,
+      {
+        authenticate,
+        cookiePassword: getSessionSecret(),
+        cookieName: "adminjs",
+      },
+      app,
+      {
+        store: sessionStore as any,
+        saveUninitialized: true,
+        secret: getSessionSecret(),
+        cookie: {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === "production",
+          sameSite: "lax",
+          maxAge: 1000 * 60 * 60 * 8, // 8 hours
+        },
+      },
+    );
+  } catch (err) {
+    app.log.error({ err }, "AdminJS skipped: buildAuthenticatedRouter failed");
+    return null;
+  }
+
+  app.addHook("onClose", async () => {
+    await closeAdminPool();
+  });
+
+  app.log.info("AdminJS registered at /admin (authenticated)");
   return admin;
 }
