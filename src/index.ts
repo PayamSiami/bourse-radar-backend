@@ -19,12 +19,6 @@ import { runMigrations } from "#db/migrate";
 
 /**
  * A stray rejection must NOT take the API down.
- *
- * Background ingestion fans out across many symbols against rate-limited
- * upstreams (Codal returns 429 under load), so a single orphaned promise was
- * enough to kill the whole server via `process.exit(1)` — taking every read
- * endpoint offline while a supervisor restarted it. Log loudly instead; an
- * `uncaughtException` still exits, since that leaves state undefined.
  */
 process.on("unhandledRejection", (reason) => {
   console.error("UNHANDLED REJECTION (not fatal):", reason);
@@ -41,11 +35,20 @@ async function buildServer() {
       level: config.app.logLevel,
     },
     routerOptions: { ignoreTrailingSlash: true },
+    // REQUIRED behind Coolify / Traefik / Nginx / ALB.
+    // Without this, AdminJS secure cookies are never set in production
+    // and /admin will 404 or redirect-loop.
+    trustProxy: true,
   });
 
   await registerPlugins(server);
   console.log("Plugins done, registering routes…");
   await registerRoutes(server);
+
+  // AdminJS mounts at /admin. It registers @fastify/cookie + @fastify/session
+  // itself (idempotently), so it must run AFTER your plugins but BEFORE listen().
+  await registerAdminJS(server);
+
   // console.log("Routes done, scheduling cron jobs…");
   await initializeJobs(server);
   // console.log("Jobs done, starting server…");
@@ -78,9 +81,6 @@ async function main() {
   }
 
   const server = await buildServer();
-
-  // Register AdminJS dashboard
-  await registerAdminJS(server);
 
   try {
     await server.listen({ port: config.app.port, host: "0.0.0.0" });

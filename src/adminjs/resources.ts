@@ -1,78 +1,14 @@
 /**
-
- * AdminJS Integration for Bourse Radar API
-
- * Mounts the AdminJS dashboard on the Fastify server at /admin.
- * Resources come from PostgreSQL via @adminjs/sql.
- * Validation is deferred until registerAdminJS() so a missing secret
- * does not crash the API at import time.
- */
-import AdminJS from "adminjs";
-import AdminJSFastify from "@adminjs/fastify";
-import { Adapter, Database, Resource } from "@adminjs/sql";
-import type { FastifyInstance } from "fastify";
-
-let adapterRegistered = false;
-
-function registerAdapter() {
-  if (adapterRegistered) return;
-  AdminJS.registerAdapter({ Database, Resource });
-  adapterRegistered = true;
-}
-
-export async function registerAdminJS(app: FastifyInstance) {
-  const databaseUrl = process.env.DATABASE_URL;
-
-  if (!databaseUrl) {
-    app.log.warn("AdminJS skipped: DATABASE_URL is not set");
-    return null;
-  }
-
-  registerAdapter();
-
-  const databaseName = decodeURIComponent(
-    new URL(databaseUrl).pathname.replace(/^\//, ""),
-  );
-
-  if (!databaseName) {
-    app.log.warn("AdminJS skipped: DATABASE_URL has no database name");
-    return null;
-  }
-
-  const db = await new Adapter("postgresql", {
-    connectionString: databaseUrl,
-    database: databaseName,
-  }).init();
-
-  const admin = new AdminJS({
-    rootPath: "/admin",
-    branding: {
-      companyName: "Bourse Radar",
-      withMadeWithLove: false,
-    },
-    resources: buildAdminResources(db),
-  });
-
-  if (process.env.NODE_ENV !== "production") {
-    admin.watch();
-  }
-
-  // buildRouter(admin, fastifyApp) mounts GET /admin and the dashboard assets.
-  await AdminJSFastify.buildRouter(admin, app);
-
-  app.log.info("AdminJS registered at /admin");
-
-  return admin;
-}
-
-/**
-
  * Builds the AdminJS resources array for the Bourse Radar backend.
  * Each resource is configured with properties, list/show/edit properties,
  * and actions visible in the AdminJS dashboard.
  */
 
-export function buildAdminResources(db: any) {
+import type { Adapter } from "@adminjs/sql";
+
+type DB = Awaited<ReturnType<Adapter["init"]>>;
+
+export function buildAdminResources(db: DB) {
   const hidden = {
     isVisible: false,
   };
@@ -154,24 +90,12 @@ export function buildAdminResources(db: any) {
           "updatedAt",
         ],
 
-        editProperties: [
-          "email",
-          "fullName",
-          "verified",
-        ],
+        editProperties: ["email", "fullName", "verified"],
 
         actions: {
-          new: {
-            isAccessible: false,
-          },
-
-          delete: {
-            isAccessible: false,
-          },
-
-          edit: {
-            isAccessible: true,
-          },
+          new: { isAccessible: false },
+          delete: { isAccessible: false },
+          edit: { isAccessible: true },
         },
       },
     },
@@ -187,11 +111,7 @@ export function buildAdminResources(db: any) {
 
         properties: {
           id: {
-            isVisible: {
-              list: true,
-              show: true,
-              edit: false,
-            },
+            isVisible: { list: true, show: true, edit: false },
           },
 
           title: {
@@ -199,35 +119,17 @@ export function buildAdminResources(db: any) {
           },
 
           createdAt: {
-            isVisible: {
-              list: true,
-              show: true,
-              edit: false,
-            },
+            isVisible: { list: true, show: true, edit: false },
           },
 
           resolvedAt: {
-            isVisible: {
-              list: true,
-              show: true,
-              edit: false,
-            },
+            isVisible: { list: true, show: true, edit: false },
           },
         },
 
-        listProperties: [
-          "id",
-          "title",
-          "status",
-          "priority",
-          "createdAt",
-        ],
+        listProperties: ["id", "title", "status", "priority", "createdAt"],
 
-        editProperties: [
-          "title",
-          "status",
-          "priority",
-        ],
+        editProperties: ["title", "status", "priority"],
       },
     },
 
@@ -242,11 +144,7 @@ export function buildAdminResources(db: any) {
 
         properties: {
           id: {
-            isVisible: {
-              list: true,
-              show: true,
-              edit: false,
-            },
+            isVisible: { list: true, show: true, edit: false },
           },
 
           symbol: {
@@ -281,59 +179,28 @@ export function buildAdminResources(db: any) {
           },
 
           createdAt: {
-            isVisible: {
-              list: true,
-              show: true,
-              filter: true,
-            },
+            isVisible: { list: true, show: true, filter: true },
           },
 
           updatedAt: {
-            isVisible: {
-              list: true,
-              show: true,
-              filter: true,
-            },
+            isVisible: { list: true, show: true, filter: true },
           },
         },
 
-        listProperties: [
-          "symbol",
-          "name",
-          "sector",
-          "price",
-          "createdAt",
-        ],
+        listProperties: ["symbol", "name", "sector", "price", "createdAt"],
 
-        showProperties: [
-          "symbol",
-          "name",
-          "sector",
-          "price",
-          "createdAt",
-        ],
+        showProperties: ["symbol", "name", "sector", "price", "createdAt"],
 
         actions: {
-          new: {
-            isAccessible: true,
-          },
-
-          edit: {
-            isAccessible: true,
-          },
-
-          delete: {
-            isAccessible: true,
-          },
-
-          bulkDelete: {
-            isAccessible: false,
-          },
+          new: { isAccessible: true },
+          edit: { isAccessible: true },
+          delete: { isAccessible: true },
+          bulkDelete: { isAccessible: false },
         },
       },
     },
 
-     // symbol sector margins
+    // SYMBOL SECTOR MARGINS
     {
       resource: db.table("symbol_sector_margins"),
       options: {
@@ -342,26 +209,19 @@ export function buildAdminResources(db: any) {
           icon: "TrendingUp",
         },
         properties: {
-          id: { isVisible: { list: true, show: true, filter: true, edit: false } },
+          id: {
+            isVisible: { list: true, show: true, filter: true, edit: false },
+          },
           // FK → stocks.symbol. AdminJS turns this into a dropdown of stocks.
           symbol: {
-            isVisible: {
-              list: true, show: true, filter: true,
-              edit: true,
-            },
+            isVisible: { list: true, show: true, filter: true, edit: true },
             reference: "stocks",
           },
           sector: {
-            isVisible: {
-              list: true, show: true, filter: true,
-              edit: true,
-            },
+            isVisible: { list: true, show: true, filter: true, edit: true },
           },
           profit_margin: {
-            isVisible: {
-              list: true, show: true, filter: true,
-              edit: true,
-            },
+            isVisible: { list: true, show: true, filter: true, edit: true },
             type: "number",
           },
           effective_from: {
@@ -372,8 +232,18 @@ export function buildAdminResources(db: any) {
           },
         },
         listProperties: ["symbol", "profit_margin", "effective_from"],
-        showProperties: ["symbol", "profit_margin", "effective_from", "effective_to"],
-        editProperties: ["symbol", "profit_margin", "effective_from", "effective_to"],
+        showProperties: [
+          "symbol",
+          "profit_margin",
+          "effective_from",
+          "effective_to",
+        ],
+        editProperties: [
+          "symbol",
+          "profit_margin",
+          "effective_from",
+          "effective_to",
+        ],
         actions: {
           new: { isAccessible: true },
           edit: { isAccessible: true },
@@ -381,6 +251,7 @@ export function buildAdminResources(db: any) {
         },
       },
     },
+
     // MONTHLY SALES
     {
       resource: db.table("monthly_sales"),
@@ -603,6 +474,7 @@ export function buildAdminResources(db: any) {
         },
       },
     },
+
     // QUARTERLY FINANCIALS
     {
       resource: db.table("quarterly_financials"),
@@ -795,6 +667,7 @@ export function buildAdminResources(db: any) {
         },
       },
     },
+
     // FORWARD P/E
     {
       resource: db.table("forward_pe"),
@@ -919,12 +792,7 @@ export function buildAdminResources(db: any) {
           },
         },
 
-        listProperties: [
-          "symbol",
-          "calculated_at",
-          "forward_pe",
-          "confidence",
-        ],
+        listProperties: ["symbol", "calculated_at", "forward_pe", "confidence"],
 
         showProperties: [
           "symbol",
