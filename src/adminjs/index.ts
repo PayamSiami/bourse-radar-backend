@@ -120,13 +120,13 @@ export async function registerAdminJS(app: FastifyInstance) {
     // otherwise disable SSL in development, enable with default settings in production.
     // Note: pg accepts `ssl: boolean | tls.ConnectionOptions`.
     // For self-signed certs in production, set PGSSLROOTCERT or use a proper TLS config.
-    const isProd = process.env.NODE_ENV === "production";
-    const sslConfig = isProd ? true : false;
+    // const isProd = process.env.NODE_ENV === "production";
+    // const sslConfig = isProd ? true : false;
 
     db = await new Adapter("postgresql", {
       connectionString: databaseUrl,
       database: databaseName,
-      ssl: sslConfig,
+      // ssl: sslConfig,
     }).init();
     app.log.info("AdminJS DB adapter connected");
   } catch (err) {
