@@ -13,9 +13,10 @@ import type { FastifyInstance } from "fastify";
 import FastifySession from "@fastify/session";
 import Connect from "connect-pg-simple";
 
+import argon2 from "argon2";
+
 import { buildAdminResources } from "./resources.js";
-import { getAdminPool, closeAdminPool } from "./pool.js";
-import { compare } from "bcrypt";
+import { closeAdminPool } from "./pool.js";
 
 let adapterRegistered = false;
 
@@ -73,10 +74,17 @@ function buildSessionStore(databaseUrl: string) {
   // we only need to expose the method. A simple implementation: load, compare
   // generation if present, then set.
   const wrapped: any = {
-    get(sessionId: string, callback: (err: Error | null, session?: any) => void) {
+    get(
+      sessionId: string,
+      callback: (err: Error | null, session?: any) => void,
+    ) {
       pgStore.get(sessionId, callback);
     },
-    set(sessionId: string, session: any, callback: (err?: Error | null) => void) {
+    set(
+      sessionId: string,
+      session: any,
+      callback: (err?: Error | null) => void,
+    ) {
       pgStore.set(sessionId, session, callback);
     },
     destroy(sessionId: string, callback: (err?: Error | null) => void) {
@@ -90,8 +98,13 @@ function buildSessionStore(databaseUrl: string) {
     ) {
       pgStore.get(sessionId, (err: Error | null, stored: any) => {
         if (err) return callback(err);
-        const storedGeneration = stored?.cookie?.generation ?? stored?.generation;
-        if (stored && storedGeneration !== undefined && storedGeneration !== expectedGeneration) {
+        const storedGeneration =
+          stored?.cookie?.generation ?? stored?.generation;
+        if (
+          stored &&
+          storedGeneration !== undefined &&
+          storedGeneration !== expectedGeneration
+        ) {
           const error = new Error("The session does not exist or has changed");
           (error as any).code = "ENOENT";
           return callback(error);
@@ -179,35 +192,31 @@ export async function registerAdminJS(app: FastifyInstance) {
     return null;
   }
 
-  // --- 4. Authentication against the users table ---
-  // Your schema (0003_users_auth.sql) has: email, password_hash.
-  // There is no `is_admin` column, so we check an env allow-list instead.
-  const adminEmails = (process.env.ADMIN_EMAILS ?? "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
+  // --- 4. Authentication against env credentials ---
+  // Production login is ADMIN_EMAIL + ADMIN_PASSWORD_HASH (argon2id).
+  // This does not depend on a users-table row or bcrypt.
+  const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
+
+  if (!adminEmail || !adminPasswordHash) {
+    app.log.error(
+      "AdminJS skipped: ADMIN_EMAIL and ADMIN_PASSWORD_HASH are required",
+    );
+    return null;
+  }
 
   const authenticate = async (email: string, password: string) => {
-    // Optional: restrict to allow-listed emails
-    if (adminEmails.length > 0) {
-      if (!adminEmails.includes(email.toLowerCase())) {
-        return null;
-      }
+    if (!email || !password) return null;
+    if (email.trim().toLowerCase() !== adminEmail) return null;
+
+    try {
+      const valid = await argon2.verify(adminPasswordHash, password);
+      if (!valid) return null;
+      return { email: adminEmail, role: "admin" };
+    } catch (err) {
+      app.log.error({ err }, "AdminJS argon2 verification failed");
+      return null;
     }
-
-    const result = await getAdminPool().query(
-      `SELECT id, email, password_hash FROM users WHERE email = $1 LIMIT 1`,
-      [email],
-    );
-
-    const user = result.rows[0];
-    if (!user) return null;
-
-    // Compare password using bcrypt
-    const valid = await compare(password, user.password_hash);
-    if (!valid) return null;
-
-    return { email: user.email, id: user.id };
   };
 
   // --- 5. Mount the authenticated router ---
